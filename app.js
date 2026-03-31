@@ -4120,12 +4120,12 @@ window.addEventListener('load', () => {
                 let contraste, brilho, blur, pathomit;
 
                 if (analise.tipo === 'lineart') {
-                    contraste = 250; brilho = 110; blur = 0; pathomit = 4;
+                    contraste = 250; brilho = 110; blur = 0; pathomit = 8;
                 } else if (analise.tipo === 'desenho') {
-                    contraste = 180; brilho = 100; blur = 1; pathomit = 4;
+                    contraste = 180; brilho = 100; blur = 1; pathomit = 12;
                 } else {
                     // foto: reforça contraste para separar silhueta do fundo
-                    contraste = 200; brilho = 95; blur = 1.5; pathomit = 4;
+                    contraste = 200; brilho = 95; blur = 1.5; pathomit = 20;
                 }
 
                 // Aplica valores nos sliders
@@ -4634,9 +4634,9 @@ window.addEventListener('load', () => {
                         console.warn('OpenCV adaptiveThreshold falhou, usando canvas:', cvErr);
                     }
                 }
-                // limparFundo: flood-fill inteligente — remove APENAS pixels BRANCOS
-                // CONECTADOS à borda da imagem. Áreas claras internas do desenho
-                // (reflexos, brilhos, destaques) são preservadas.
+                // limparFundo: flood-fill inteligente — remove APENAS pixels de fundo
+                // CONECTADOS à borda da imagem. Áreas claras/brancas INTERNAS do
+                // desenho (reflexos, brilhos, destaques) são preservadas.
                 {
                     const _fd = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
                     const _pd = _fd.data;
@@ -4646,27 +4646,41 @@ window.addEventListener('load', () => {
                     const _visited = new Uint8Array(_total);
                     const _remover = new Uint8Array(_total);
 
-                    // Limiar alto (250) para não vazar por bordas anti-aliased
-                    // após filtro de contraste. Só branco quase puro é considerado fundo.
-                    const _LIMIAR = 250;
+                    // Cor de fundo detectada nas bordas (pode ser null se branco/preto puro)
+                    const _corFundoDet = window._corFundo;
+                    const _LIMIAR_BRANCO = 240;
+                    const _LIMIAR_COR = 50; // distância euclidiana RGB
 
-                    const _ehBranco = (idx) => {
+                    // Verifica se pixel é cor de fundo (branco OU cor detectada)
+                    const _ehFundo = (idx) => {
                         const i = idx * 4;
-                        if (_pd[i + 3] === 0) return false;
-                        return _pd[i] > _LIMIAR && _pd[i + 1] > _LIMIAR && _pd[i + 2] > _LIMIAR;
+                        if (_pd[i + 3] === 0) return false; // já transparente
+                        const r = _pd[i], g = _pd[i + 1], b = _pd[i + 2];
+                        // Branco / quase-branco
+                        if (r > _LIMIAR_BRANCO && g > _LIMIAR_BRANCO && b > _LIMIAR_BRANCO) return true;
+                        // Cor de fundo detectada
+                        if (_corFundoDet) {
+                            const dist = Math.sqrt(
+                                (r - _corFundoDet.r) ** 2 +
+                                (g - _corFundoDet.g) ** 2 +
+                                (b - _corFundoDet.b) ** 2
+                            );
+                            if (dist < _LIMIAR_COR) return true;
+                        }
+                        return false;
                     };
 
-                    // Semeia flood-fill com pixels brancos das 4 bordas
+                    // Semeia flood-fill com todos os pixels das 4 bordas
                     const _fila = [];
                     for (let x = 0; x < _w; x++) {
                         const t = x, bt = (_h - 1) * _w + x;
-                        if (_ehBranco(t))  { _visited[t]  = 1; _remover[t]  = 1; _fila.push(t);  }
-                        if (_ehBranco(bt)) { _visited[bt] = 1; _remover[bt] = 1; _fila.push(bt); }
+                        if (_ehFundo(t))  { _visited[t]  = 1; _remover[t]  = 1; _fila.push(t);  }
+                        if (_ehFundo(bt)) { _visited[bt] = 1; _remover[bt] = 1; _fila.push(bt); }
                     }
                     for (let y = 1; y < _h - 1; y++) {
                         const l = y * _w, r = y * _w + _w - 1;
-                        if (!_visited[l] && _ehBranco(l)) { _visited[l] = 1; _remover[l] = 1; _fila.push(l); }
-                        if (!_visited[r] && _ehBranco(r)) { _visited[r] = 1; _remover[r] = 1; _fila.push(r); }
+                        if (!_visited[l] && _ehFundo(l)) { _visited[l] = 1; _remover[l] = 1; _fila.push(l); }
+                        if (!_visited[r] && _ehFundo(r)) { _visited[r] = 1; _remover[r] = 1; _fila.push(r); }
                     }
 
                     // BFS com índice de leitura (O(1) por dequeue, sem shift())
@@ -4675,54 +4689,24 @@ window.addEventListener('load', () => {
                         const idx = _fila[_qi++];
                         const x = idx % _w;
                         const y = (idx / _w) | 0;
-                        if (x > 0)      { const n = idx - 1;   if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (x < _w - 1) { const n = idx + 1;   if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (y > 0)      { const n = idx - _w;  if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (y < _h - 1) { const n = idx + _w;  if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (x > 0)      { const n = idx - 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (x < _w - 1) { const n = idx + 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (y > 0)      { const n = idx - _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (y < _h - 1) { const n = idx + _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
                     }
 
-                    // Segurança: se removeu >85% dos pixels opacos, flood-fill vazou
-                    // Nesse caso reverte e usa método conservador (nada removido aqui,
-                    // o pós-processamento SVG cuida do fundo)
-                    let _nOpacos = 0;
-                    for (let i = 0; i < _total; i++) if (_pd[i * 4 + 3] > 0) _nOpacos++;
-                    const _removidos = _fila.length;
-                    const _proporcao = _nOpacos > 0 ? _removidos / _nOpacos : 0;
-
-                    if (_proporcao < 0.85) {
-                        // Flood-fill OK — aplica transparência
-                        for (let i = 0; i < _total; i++) {
-                            if (_remover[i]) _pd[i * 4 + 3] = 0;
-                        }
-                        hCtx.putImageData(_fd, 0, 0);
+                    // Torna transparente APENAS os pixels de fundo conectados à borda
+                    for (let i = 0; i < _total; i++) {
+                        if (_remover[i]) _pd[i * 4 + 3] = 0;
                     }
-                    // Se >85%, pula — o pós-processamento SVG remove o fundo
+                    hCtx.putImageData(_fd, 0, 0);
                 }
                 imgData = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
                 const pathomit = parseInt(document.getElementById('pre-pathomit')?.value || 16);
 
                 // PASSO 2: Paleta e opções baseadas nas cores auto-detectadas
                 const hex2rgb = h => ({ r:parseInt(h.slice(1,3),16), g:parseInt(h.slice(3,5),16), b:parseInt(h.slice(5,7),16), a:255 });
-
-                // Adiciona cor "coringa" — média de todos os pixels não-brancos da imagem.
-                // Pixels nas bordas entre cores que não casam com nenhuma cor da paleta
-                // caem nessa cor em vez de virar branco/buraco.
-                const _coringa = (() => {
-                    const d = imgData.data;
-                    let sr = 0, sg = 0, sb = 0, n = 0;
-                    for (let i = 0; i < d.length; i += 4) {
-                        if (d[i+3] < 100) continue;
-                        if (d[i] > 240 && d[i+1] > 240 && d[i+2] > 240) continue;
-                        sr += d[i]; sg += d[i+1]; sb += d[i+2]; n++;
-                    }
-                    if (!n) return null;
-                    const r = Math.round(sr/n), g = Math.round(sg/n), b = Math.round(sb/n);
-                    return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
-                })();
-                const coresComCoringa = _coringa && !coresUsuarioFinal.includes(_coringa)
-                    ? [...coresUsuarioFinal, _coringa]
-                    : coresUsuarioFinal;
-                const coresUsuario = coresComCoringa;
+                const coresUsuario = coresUsuarioFinal; // paleta completa vinda de _paletaDetectada ou fallback manual
 
                 // Helper: distância euclidiana entre duas cores RGB
                 function corDist(c1, c2) {
@@ -4758,7 +4742,7 @@ window.addEventListener('load', () => {
                     opcoes = {
                         colorsampling: 0,
                         numberofcolors: palIT.length,
-                        colorquantcycles: 8,   // mais ciclos = separação de cores melhor, preenche mais regiões
+                        colorquantcycles: 5,   // mais ciclos = separação de cores melhor
                         pal: palIT,
                         ltres: 0.5, qtres: 0.5, // curvas mais suaves e precisas
                         pathomit: pathomitVal,
@@ -4851,18 +4835,17 @@ window.addEventListener('load', () => {
                                 const d = corDist(fillRgb, rgb);
                                 if (d < melhorDist) { melhorDist = d; melhorCor = hex; }
                             });
-                            // Aplica fill sólido com a cor identificada
-                            // stroke com a mesma cor e largura 1.5px fecha micro-gaps entre regiões
+                            // Aplica fill sólido com a cor identificada (mantém a área colorida)
                             path.setAttribute('fill', melhorCor);
                             path.setAttribute('stroke', melhorCor);
-                            path.setAttribute('stroke-width', '1.5');
+                            path.setAttribute('stroke-width', Math.max(0.5, larguraTraco * 0.3));
                             path.setAttribute('stroke-linejoin', 'round');
                             path.removeAttribute('opacity');
                         } else {
                             // Fallback: usa cor1
                             path.setAttribute('fill', cor1);
                             path.setAttribute('stroke', cor1);
-                            path.setAttribute('stroke-width', '1.5');
+                            path.setAttribute('stroke-width', Math.max(0.5, larguraTraco * 0.3));
                             path.removeAttribute('opacity');
                         }
                     }
