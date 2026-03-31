@@ -4685,13 +4685,13 @@ window.addEventListener('load', () => {
                     opcoes = {
                         colorsampling: 0,
                         numberofcolors: palIT.length,
-                        colorquantcycles: 5,   // era 3 → mais ciclos = separação de cores melhor
+                        colorquantcycles: 5,   // mais ciclos = separação de cores melhor
                         pal: palIT,
-                        ltres: 0.5, qtres: 0.5, // era 1,1 → curvas mais suaves e precisas
+                        ltres: 0.5, qtres: 0.5, // curvas mais suaves e precisas
                         pathomit: pathomitVal,
-                        blurradius: 1,          // era 0 → suaviza ruído de pixel antes do traço
+                        blurradius: 0,          // sem blur — preserva nitidez das bordas de cor
                         mincolorratio: 0,
-                        linefilter: true,        // era false → remove linhas de 1px (ruído)
+                        linefilter: false,       // mantém linhas finas (escamas, detalhes)
                         strokewidth: 0,
                         viewbox: true,
                         scale: 1
