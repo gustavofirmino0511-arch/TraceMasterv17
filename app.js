@@ -4854,24 +4854,71 @@ window.addEventListener('load', () => {
                                 const d = corDist(fillRgb, rgb);
                                 if (d < melhorDist) { melhorDist = d; melhorCor = hex; }
                             });
-                            // Aplica fill sólido com a cor identificada (mantém a área colorida)
+                            // Aplica fill sólido com a cor identificada
+                            // stroke com a mesma cor e largura 1.5px fecha micro-gaps entre regiões
                             path.setAttribute('fill', melhorCor);
                             path.setAttribute('stroke', melhorCor);
-                            path.setAttribute('stroke-width', Math.max(0.5, larguraTraco * 0.3));
+                            path.setAttribute('stroke-width', '1.5');
                             path.setAttribute('stroke-linejoin', 'round');
                             path.removeAttribute('opacity');
                         } else {
                             // Fallback: usa cor1
                             path.setAttribute('fill', cor1);
                             path.setAttribute('stroke', cor1);
-                            path.setAttribute('stroke-width', Math.max(0.5, larguraTraco * 0.3));
+                            path.setAttribute('stroke-width', '1.5');
                             path.removeAttribute('opacity');
                         }
                     }
                 });
 
                 document.body.removeChild(tmpSvg);
-                const svgFinal = new XMLSerializer().serializeToString(svgDoc);
+
+                // PASSO 4: Segunda passagem — contorno preto por cima das cores
+                // Extrai apenas os pixels escuros da imagem original (outlines do estilo cartoon)
+                // e traça como camada separada on top, restaurando os contornos pretos.
+                const _escuros = (() => {
+                    const orig = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
+                    const out  = new ImageData(hCanvas.width, hCanvas.height);
+                    const d = orig.data, od = out.data;
+                    let count = 0;
+                    for (let i = 0; i < d.length; i += 4) {
+                        if (d[i] < 70 && d[i+1] < 70 && d[i+2] < 70 && d[i+3] > 100) {
+                            od[i]=0; od[i+1]=0; od[i+2]=0; od[i+3]=255;
+                            count++;
+                        }
+                    }
+                    return count > (hCanvas.width * hCanvas.height * 0.01) ? out : null;
+                })();
+
+                let svgFinal = new XMLSerializer().serializeToString(svgDoc);
+
+                if (_escuros) {
+                    // Traça os pixels escuros como SVG preto separado e injeta no final
+                    const opcoesContorno = {
+                        colorsampling: 0, numberofcolors: 2, colorquantcycles: 1,
+                        pal: [{r:0,g:0,b:0,a:255},{r:255,g:255,b:255,a:0}],
+                        ltres: 0.5, qtres: 0.5, pathomit: 3, blurradius: 0,
+                        mincolorratio: 0, linefilter: false, strokewidth: 0, viewbox: true, scale: 1
+                    };
+                    try {
+                        const svgContorno = ImageTracer.imagedataToSVG(_escuros, opcoesContorno);
+                        const docC = new DOMParser().parseFromString(svgContorno, 'image/svg+xml');
+                        const pathsC = Array.from(docC.querySelectorAll('path'));
+                        // Injeta os paths pretos direto no svgDoc (já tem o viewBox correto)
+                        const rootSvg = svgDoc.querySelector('svg') || svgDoc.documentElement;
+                        pathsC.forEach(p => {
+                            const fill = (p.getAttribute('fill') || '').toLowerCase();
+                            if (fill.includes('255,255,255') || fill === '#ffffff' || fill === 'white') return;
+                            p.setAttribute('fill', '#1a1a1a');
+                            p.removeAttribute('stroke');
+                            rootSvg.appendChild(p.cloneNode(true));
+                        });
+                        svgFinal = new XMLSerializer().serializeToString(svgDoc);
+                    } catch(eC) {
+                        console.warn('Contorno preto falhou:', eC);
+                    }
+                }
+
                 svgArea.innerHTML = svgFinal;
                 camadaFoto.svgHTML = svgArea.innerHTML;
 
