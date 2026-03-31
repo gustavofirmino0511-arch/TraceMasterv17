@@ -4657,7 +4657,7 @@ window.addEventListener('load', () => {
     function deveAplicarContorno(analise, corContorno) {
         if (!analise || !corContorno) return false;
         if (analise.tipo === 'lineart') return true;
-        if (analise.tipo === 'desenho') return analise.bordas > 0.06 || analise.contraste > 0.18;
+        if (analise.tipo === 'desenho') return analise.bordas > 0.04 || analise.contraste > 0.15;
         return analise.bordas > 0.13 && analise.contraste > 0.16;
     }
 
@@ -4698,6 +4698,53 @@ window.addEventListener('load', () => {
             b: Math.round(somaB / total),
         };
         if (!paleta || !paleta.length) return rgbToHex(media);
+
+        let melhorCor = paleta[0];
+        let melhorDist = Infinity;
+        paleta.forEach(hex => {
+            const dist = corDistRgb(media, hexToRgb(hex));
+            if (dist < melhorDist) {
+                melhorDist = dist;
+                melhorCor = hex;
+            }
+        });
+        return melhorCor;
+    }
+
+    function amostrarCorEntorno(imageData, width, height, bb, paleta, corFundo) {
+        if (!bb || bb.width <= 0 || bb.height <= 0) return null;
+        const data = imageData.data;
+        const pontos = [];
+        const margem = Math.max(2, Math.round(Math.min(bb.width, bb.height) * 0.18));
+        const x1 = clampNum(Math.round(bb.x - margem), 0, width - 1);
+        const x2 = clampNum(Math.round(bb.x + bb.width + margem), 0, width - 1);
+        const y1 = clampNum(Math.round(bb.y - margem), 0, height - 1);
+        const y2 = clampNum(Math.round(bb.y + bb.height + margem), 0, height - 1);
+        const cx = clampNum(Math.round(bb.x + bb.width / 2), 0, width - 1);
+        const cy = clampNum(Math.round(bb.y + bb.height / 2), 0, height - 1);
+
+        [
+            [x1, y1], [cx, y1], [x2, y1],
+            [x1, cy],           [x2, cy],
+            [x1, y2], [cx, y2], [x2, y2],
+        ].forEach(([x, y]) => {
+            const idx = (y * width + x) * 4;
+            const rgb = { r: data[idx], g: data[idx + 1], b: data[idx + 2] };
+            if (data[idx + 3] < 40) return;
+            if (rgb.r > 245 && rgb.g > 245 && rgb.b > 245) return;
+            if (corFundo && corDistRgb(rgb, corFundo) < 46) return;
+            pontos.push(rgb);
+        });
+
+        if (!pontos.length) return null;
+        const media = pontos.reduce((acc, rgb) => ({
+            r: acc.r + rgb.r,
+            g: acc.g + rgb.g,
+            b: acc.b + rgb.b,
+        }), { r: 0, g: 0, b: 0 });
+        media.r /= pontos.length;
+        media.g /= pontos.length;
+        media.b /= pontos.length;
 
         let melhorCor = paleta[0];
         let melhorDist = Infinity;
@@ -4987,7 +5034,7 @@ window.addEventListener('load', () => {
 
                     const fillAtual = (path.getAttribute('fill') || '').toLowerCase();
                     const fillRgb = parseSvgColor(fillAtual);
-                    const eBranco = fillAtual.includes('255,255,255') || fillAtual === '#ffffff' || fillAtual === 'white';
+                    const eBranco = fillAtual.includes('255,255,255') || fillAtual === '#ffffff' || fillAtual === 'white' || (fillRgb && luminanciaRgb(fillRgb) > 238);
                     const margem = 3;
                     const tocaBorda = !!bb && (
                         bb.x <= margem || bb.y <= margem ||
@@ -5041,6 +5088,13 @@ window.addEventListener('load', () => {
                             bb,
                             coresUsuarioFinal,
                             window._corFundo
+                        ) || amostrarCorEntorno(
+                            imgData,
+                            hCanvas.width,
+                            hCanvas.height,
+                            bb,
+                            coresUsuarioFinal,
+                            window._corFundo
                         ) || corPreenchimento || coresUsuarioFinal[0];
                     }
 
@@ -5048,7 +5102,7 @@ window.addEventListener('load', () => {
                         ? escolherCorContorno(corPreenchimento, corContornoBase)
                         : corPreenchimento;
                     const larguraStroke = aplicarContorno
-                        ? Math.max(0.6, larguraTraco * cfgSens.contourWidth)
+                        ? Math.max(0.9, larguraTraco * Math.max(cfgSens.contourWidth, 0.62))
                         : Math.max(0.35, larguraTraco * 0.18);
 
                     path.setAttribute('fill', corPreenchimento);
