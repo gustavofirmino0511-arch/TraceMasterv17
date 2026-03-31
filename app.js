@@ -4869,60 +4869,7 @@ window.addEventListener('load', () => {
                 });
 
                 document.body.removeChild(tmpSvg);
-
-                // PASSO 4: Segunda passagem — contorno preto por cima das cores
-                // Lê da imagem ORIGINAL (antes do processamento de contraste/brilho)
-                // para não confundir pixels escurecidos pelo filtro com contornos reais.
-                const _escuros = (() => {
-                    const imgOrig = window.imgParaVetor;
-                    if (!imgOrig) return null;
-                    const tc = document.createElement('canvas');
-                    tc.width = hCanvas.width; tc.height = hCanvas.height;
-                    const tctx = tc.getContext('2d');
-                    tctx.drawImage(imgOrig, 0, 0, tc.width, tc.height);
-                    const orig = tctx.getImageData(0, 0, tc.width, tc.height);
-                    const out  = new ImageData(tc.width, tc.height);
-                    const d = orig.data, od = out.data;
-                    let count = 0;
-                    for (let i = 0; i < d.length; i += 4) {
-                        // Limiar 45: captura contornos pretos originais, ignora sombras médias
-                        if (d[i] < 45 && d[i+1] < 45 && d[i+2] < 45 && d[i+3] > 100) {
-                            od[i]=0; od[i+1]=0; od[i+2]=0; od[i+3]=255;
-                            count++;
-                        }
-                    }
-                    return count > (tc.width * tc.height * 0.01) ? out : null;
-                })();
-
-                let svgFinal = new XMLSerializer().serializeToString(svgDoc);
-
-                if (_escuros) {
-                    // Traça os pixels escuros como SVG preto separado e injeta no final
-                    const opcoesContorno = {
-                        colorsampling: 0, numberofcolors: 2, colorquantcycles: 1,
-                        pal: [{r:0,g:0,b:0,a:255},{r:255,g:255,b:255,a:0}],
-                        ltres: 0.5, qtres: 0.5, pathomit: 3, blurradius: 0,
-                        mincolorratio: 0, linefilter: false, strokewidth: 0, viewbox: true, scale: 1
-                    };
-                    try {
-                        const svgContorno = ImageTracer.imagedataToSVG(_escuros, opcoesContorno);
-                        const docC = new DOMParser().parseFromString(svgContorno, 'image/svg+xml');
-                        const pathsC = Array.from(docC.querySelectorAll('path'));
-                        // Injeta os paths pretos direto no svgDoc (já tem o viewBox correto)
-                        const rootSvg = svgDoc.querySelector('svg') || svgDoc.documentElement;
-                        pathsC.forEach(p => {
-                            const fill = (p.getAttribute('fill') || '').toLowerCase();
-                            if (fill.includes('255,255,255') || fill === '#ffffff' || fill === 'white') return;
-                            p.setAttribute('fill', '#1a1a1a');
-                            p.removeAttribute('stroke');
-                            rootSvg.appendChild(p.cloneNode(true));
-                        });
-                        svgFinal = new XMLSerializer().serializeToString(svgDoc);
-                    } catch(eC) {
-                        console.warn('Contorno preto falhou:', eC);
-                    }
-                }
-
+                const svgFinal = new XMLSerializer().serializeToString(svgDoc);
                 svgArea.innerHTML = svgFinal;
                 camadaFoto.svgHTML = svgArea.innerHTML;
 
