@@ -4085,10 +4085,14 @@ window.addEventListener('load', () => {
                 _setSlider('pre-pathomit',  pathomit,  '');
 
                 // ── Paleta completa auto-detectada ──────────────────────────
+                // _mostrarPaletaModal já define window._paletaDetectada com todas as cores
                 const nCores = analise.coresDom.length;
-                window._paletaDetectada = analise.coresDom;
                 const countEl = document.getElementById('tm-cores-auto-count');
-                if (countEl) countEl.textContent = nCores + ' cor' + (nCores !== 1 ? 'es' : '') + ' (auto)';
+                if (countEl) {
+                    countEl.textContent = '✅ ' + nCores + ' cor' + (nCores !== 1 ? 'es' : '') +
+                        ' selecionada' + (nCores !== 1 ? 's' : '') + ' automaticamente';
+                    countEl.style.color = '#03dac6';
+                }
 
                 // Compat: preenche inputs ocultos até 3 para o fallback manual
                 if (analise.coresDom.length > 0) {
@@ -4098,7 +4102,6 @@ window.addEventListener('load', () => {
                         if (el) el.value = c;
                     });
                 }
-                window.setNrCores(Math.min(nCores, 3));
 
                 // Atualiza preview
                 atualizarPreviewVetor();
@@ -4129,23 +4132,43 @@ window.addEventListener('load', () => {
     }
 
     // ── Aux: mostra swatches da paleta no modal ──────────────────────────
+    // Todos os swatches começam SELECIONADOS (serão todos usados na vetorização).
+    // Clicar num swatch ALTERNA sua inclusão na paleta: desseleciona/inclui de volta.
     function _mostrarPaletaModal(cores) {
         const wrap    = document.getElementById('tm-paleta-wrap');
         const coresEl = document.getElementById('tm-paleta-cores');
         if (!wrap || !coresEl || !cores.length) return;
         coresEl.innerHTML = '';
-        cores.forEach((hex, i) => {
+
+        // Reinicia a paleta detectada com todas as cores
+        window._paletaDetectada = [...cores];
+
+        cores.forEach((hex) => {
             const sw = document.createElement('div');
-            sw.className = 'tm-cor-swatch';
+            sw.className = 'tm-cor-swatch ativa'; // começa selecionado
             sw.style.background = hex;
-            sw.title = hex;
-            // Ao clicar no swatch, aplica na cor 1
+            sw.title = hex + ' — clique para remover/adicionar';
+            sw.dataset.cor = hex;
+
             sw.addEventListener('click', () => {
-                const el = document.getElementById('modal-color');
-                if (el) { el.value = hex; atualizarPreviewVetor(); }
-                document.querySelectorAll('.tm-cor-swatch').forEach(s => s.classList.remove('ativa'));
-                sw.classList.add('ativa');
+                const ativo = sw.classList.toggle('ativa');
+                // Recalcula _paletaDetectada com apenas os swatches ativos
+                window._paletaDetectada = Array.from(
+                    document.querySelectorAll('.tm-cor-swatch.ativa')
+                ).map(s => s.dataset.cor);
+
+                // Atualiza o contador
+                const n = window._paletaDetectada.length;
+                const countEl = document.getElementById('tm-cores-auto-count');
+                if (countEl) {
+                    countEl.textContent = n > 0
+                        ? '✅ ' + n + ' cor' + (n !== 1 ? 'es' : '') + ' selecionada' + (n !== 1 ? 's' : '')
+                        : '⚠️ Nenhuma cor selecionada';
+                    countEl.style.color = n > 0 ? '#03dac6' : '#ff5252';
+                }
+                atualizarPreviewVetor();
             });
+
             coresEl.appendChild(sw);
         });
         wrap.style.display = 'flex';
@@ -4529,8 +4552,11 @@ window.addEventListener('load', () => {
                 hCtx.filter = 'none';
 
                 let imgData;
-                // Se OpenCV disponível: usa adaptiveThreshold para preservar detalhes em iluminação desigual
-                if (window._cvReady && window.cv && window.cv.imread) {
+                // adaptiveThreshold: SOMENTE para modo 1 cor (lineart/preto-e-branco).
+                // Modo multicor PRECISA preservar os pixels coloridos originais para o
+                // ImageTracer conseguir mapear cada região à cor correta da paleta.
+                // Aplicar adaptiveThreshold em multicor converte tudo para P&B → canvas preto.
+                if (!usarMultiCor && window._cvReady && window.cv && window.cv.imread) {
                     try {
                         const cv = window.cv;
                         const src  = cv.imread(hCanvas);

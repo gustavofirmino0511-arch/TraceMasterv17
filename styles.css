@@ -386,7 +386,13 @@
         position: relative;
     }
     .tm-cor-swatch:active { transform: scale(1.2); border-color: #03dac6; }
-    .tm-cor-swatch.ativa  { border-color: #03dac6; transform: scale(1.1); }
+    .tm-cor-swatch.ativa  { border-color: #03dac6; transform: scale(1.1); box-shadow: 0 0 0 2px rgba(3,218,198,0.35); }
+    /* Swatch não selecionado: opaco e riscado para indicar que será ignorado */
+    .tm-cor-swatch:not(.ativa) { opacity: 0.35; transform: scale(0.9); border-color: #333; }
+    .tm-cor-swatch:not(.ativa)::after {
+        content: ''; position: absolute; top: 50%; left: 0; right: 0;
+        height: 2px; background: #ff5252; transform: rotate(-45deg) translateY(-50%);
+    }
     .tm-tag-tipo-img {
         font-size: 9px; padding: 3px 8px; border-radius: 10px;
         font-weight: bold; letter-spacing: 0.5px; white-space: nowrap;
