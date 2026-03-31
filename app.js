@@ -4167,15 +4167,17 @@ window.addEventListener('load', () => {
                 //  FOTO     → contraste alto, blur moderado, 3 cores
                 // ────────────────────────────────────────────────────────────
                 let contraste, brilho, blur, pathomit;
+                const ilustracaoColorida = analise.tipo === 'desenho' &&
+                    (analise.coloridaComOutline || analise.nCoresDom >= 6);
 
                 if (analise.tipo === 'lineart') {
                     contraste = 250; brilho = 110; blur = 0; pathomit = 5;
+                } else if (ilustracaoColorida) {
+                    // Preset conservador: aproxima o resultado do botão manual,
+                    // que preserva melhor volumes internos em ilustrações coloridas.
+                    contraste = 150; brilho = 100; blur = 1; pathomit = 16;
                 } else if (analise.tipo === 'desenho') {
-                    const desenhoColorido = analise.coloridaComOutline || analise.nCoresDom >= 6;
-                    contraste = desenhoColorido ? 165 : 185;
-                    brilho = desenhoColorido ? 100 : 102;
-                    blur = desenhoColorido ? 0 : 0.5;
-                    pathomit = desenhoColorido ? 4 : 8;
+                    contraste = 175; brilho = 101; blur = 0.5; pathomit = 10;
                 } else {
                     // foto: reforça contraste para separar silhueta do fundo
                     contraste = 185; brilho = 98; blur = 0.8; pathomit = 8;
