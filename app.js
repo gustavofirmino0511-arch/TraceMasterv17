@@ -4635,12 +4635,70 @@ window.addEventListener('load', () => {
                         console.warn('OpenCV adaptiveThreshold falhou, usando canvas:', cvErr);
                     }
                 }
-                // limparFundo: remove branco antes de vetorizar
+                // limparFundo: flood-fill inteligente — remove APENAS pixels de fundo
+                // CONECTADOS à borda da imagem. Áreas claras/brancas INTERNAS do
+                // desenho (reflexos, brilhos, destaques) são preservadas.
                 {
                     const _fd = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
                     const _pd = _fd.data;
-                    for (let _i = 0; _i < _pd.length; _i += 4) {
-                        if (_pd[_i] > 240 && _pd[_i+1] > 240 && _pd[_i+2] > 240) _pd[_i+3] = 0;
+                    const _w = hCanvas.width;
+                    const _h = hCanvas.height;
+                    const _total = _w * _h;
+                    const _visited = new Uint8Array(_total);
+                    const _remover = new Uint8Array(_total);
+
+                    // Cor de fundo detectada nas bordas (pode ser null se branco/preto puro)
+                    const _corFundoDet = window._corFundo;
+                    const _LIMIAR_BRANCO = 240;
+                    const _LIMIAR_COR = 50; // distância euclidiana RGB
+
+                    // Verifica se pixel é cor de fundo (branco OU cor detectada)
+                    const _ehFundo = (idx) => {
+                        const i = idx * 4;
+                        if (_pd[i + 3] === 0) return false; // já transparente
+                        const r = _pd[i], g = _pd[i + 1], b = _pd[i + 2];
+                        // Branco / quase-branco
+                        if (r > _LIMIAR_BRANCO && g > _LIMIAR_BRANCO && b > _LIMIAR_BRANCO) return true;
+                        // Cor de fundo detectada
+                        if (_corFundoDet) {
+                            const dist = Math.sqrt(
+                                (r - _corFundoDet.r) ** 2 +
+                                (g - _corFundoDet.g) ** 2 +
+                                (b - _corFundoDet.b) ** 2
+                            );
+                            if (dist < _LIMIAR_COR) return true;
+                        }
+                        return false;
+                    };
+
+                    // Semeia flood-fill com todos os pixels das 4 bordas
+                    const _fila = [];
+                    for (let x = 0; x < _w; x++) {
+                        const t = x, bt = (_h - 1) * _w + x;
+                        if (_ehFundo(t))  { _visited[t]  = 1; _remover[t]  = 1; _fila.push(t);  }
+                        if (_ehFundo(bt)) { _visited[bt] = 1; _remover[bt] = 1; _fila.push(bt); }
+                    }
+                    for (let y = 1; y < _h - 1; y++) {
+                        const l = y * _w, r = y * _w + _w - 1;
+                        if (!_visited[l] && _ehFundo(l)) { _visited[l] = 1; _remover[l] = 1; _fila.push(l); }
+                        if (!_visited[r] && _ehFundo(r)) { _visited[r] = 1; _remover[r] = 1; _fila.push(r); }
+                    }
+
+                    // BFS com índice de leitura (O(1) por dequeue, sem shift())
+                    let _qi = 0;
+                    while (_qi < _fila.length) {
+                        const idx = _fila[_qi++];
+                        const x = idx % _w;
+                        const y = (idx / _w) | 0;
+                        if (x > 0)      { const n = idx - 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (x < _w - 1) { const n = idx + 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (y > 0)      { const n = idx - _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (y < _h - 1) { const n = idx + _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                    }
+
+                    // Torna transparente APENAS os pixels de fundo conectados à borda
+                    for (let i = 0; i < _total; i++) {
+                        if (_remover[i]) _pd[i * 4 + 3] = 0;
                     }
                     hCtx.putImageData(_fd, 0, 0);
                 }
@@ -4730,7 +4788,24 @@ window.addEventListener('load', () => {
                     const eBranco = fillAtual.toLowerCase().includes('255,255,255') ||
                                     fillAtual.toLowerCase() === '#ffffff' ||
                                     fillAtual.toLowerCase() === 'white';
-                    if (eBranco) { path.remove(); return; }
+                    // Só remove branco se o path tocar a borda do canvas (=fundo residual)
+                    // ou ocupar área muito grande. Áreas brancas internas são preservadas.
+                    if (eBranco) {
+                        try {
+                            const cloneB = path.cloneNode(true);
+                            tmpSvg.appendChild(cloneB);
+                            const bbB = cloneB.getBBox();
+                            tmpSvg.removeChild(cloneB);
+                            const margem = 3;
+                            const tocaBorda = bbB.x <= margem || bbB.y <= margem ||
+                                              (bbB.x + bbB.width) >= hCanvas.width - margem ||
+                                              (bbB.y + bbB.height) >= hCanvas.height - margem;
+                            const areaGrande = (bbB.width * bbB.height) > (hCanvas.width * hCanvas.height * 0.15);
+                            if (tocaBorda || areaGrande) { path.remove(); return; }
+                        } catch(e) {
+                            path.remove(); return;
+                        }
+                    }
 
                     // Remove paths com a cor de fundo detectada (se opção ativa)
                     const removerFundo = document.getElementById('tm-remover-fundo')?.checked !== false;
