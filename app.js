@@ -4120,12 +4120,12 @@ window.addEventListener('load', () => {
                 let contraste, brilho, blur, pathomit;
 
                 if (analise.tipo === 'lineart') {
-                    contraste = 250; brilho = 110; blur = 0; pathomit = 8;
+                    contraste = 250; brilho = 110; blur = 0; pathomit = 4;
                 } else if (analise.tipo === 'desenho') {
-                    contraste = 180; brilho = 100; blur = 1; pathomit = 12;
+                    contraste = 180; brilho = 100; blur = 1; pathomit = 4;
                 } else {
                     // foto: reforça contraste para separar silhueta do fundo
-                    contraste = 200; brilho = 95; blur = 1.5; pathomit = 20;
+                    contraste = 200; brilho = 95; blur = 1.5; pathomit = 4;
                 }
 
                 // Aplica valores nos sliders
@@ -4706,7 +4706,26 @@ window.addEventListener('load', () => {
 
                 // PASSO 2: Paleta e opções baseadas nas cores auto-detectadas
                 const hex2rgb = h => ({ r:parseInt(h.slice(1,3),16), g:parseInt(h.slice(3,5),16), b:parseInt(h.slice(5,7),16), a:255 });
-                const coresUsuario = coresUsuarioFinal; // paleta completa vinda de _paletaDetectada ou fallback manual
+
+                // Adiciona cor "coringa" — média de todos os pixels não-brancos da imagem.
+                // Pixels nas bordas entre cores que não casam com nenhuma cor da paleta
+                // caem nessa cor em vez de virar branco/buraco.
+                const _coringa = (() => {
+                    const d = imgData.data;
+                    let sr = 0, sg = 0, sb = 0, n = 0;
+                    for (let i = 0; i < d.length; i += 4) {
+                        if (d[i+3] < 100) continue;
+                        if (d[i] > 240 && d[i+1] > 240 && d[i+2] > 240) continue;
+                        sr += d[i]; sg += d[i+1]; sb += d[i+2]; n++;
+                    }
+                    if (!n) return null;
+                    const r = Math.round(sr/n), g = Math.round(sg/n), b = Math.round(sb/n);
+                    return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
+                })();
+                const coresComCoringa = _coringa && !coresUsuarioFinal.includes(_coringa)
+                    ? [...coresUsuarioFinal, _coringa]
+                    : coresUsuarioFinal;
+                const coresUsuario = coresComCoringa;
 
                 // Helper: distância euclidiana entre duas cores RGB
                 function corDist(c1, c2) {
@@ -4742,7 +4761,7 @@ window.addEventListener('load', () => {
                     opcoes = {
                         colorsampling: 0,
                         numberofcolors: palIT.length,
-                        colorquantcycles: 5,   // mais ciclos = separação de cores melhor
+                        colorquantcycles: 8,   // mais ciclos = separação de cores melhor, preenche mais regiões
                         pal: palIT,
                         ltres: 0.5, qtres: 0.5, // curvas mais suaves e precisas
                         pathomit: pathomitVal,
