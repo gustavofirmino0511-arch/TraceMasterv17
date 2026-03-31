@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TraceMaster v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Righteous&family=Fredoka+One&family=Pacifico&family=Lobster&family=Press+Start+2P&family=Orbitron:wght@700&family=Cinzel:wght@700&family=Raleway:wght@800&family=Oswald:wght@700&family=Playfair+Display:wght@700&family=Dancing+Script:wght@700&family=Abril+Fatface&family=Black+Han+Sans&family=Boogaloo&family=Chewy&family=Permanent+Marker&family=Russo+One&family=Saira+Stencil+One&family=Yatra+One&display=swap" rel="stylesheet" crossorigin>
+<script src="https://unpkg.com/imagetracerjs@1.2.6/imagetracer_v1.2.6.js"></script>
+<script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="window._cvReady=true;console.log('OpenCV.js pronto!');"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="ui-top">
+    <b>TraceMaster</b><br>
+    <small>Sensibilidade:</small> <input type="range" id="thresh" min="10" max="150" value="50">
+</div>
+
+<!-- MODAL DEGRADÊ -->
+<div id="modal-degrade">
+    <div class="degrade-box">
+        <h3>🎨 DEGRADÊ</h3>
+        <!-- Preview -->
+        <canvas id="degrade-preview-canvas" width="240" height="56" style="width:100%;height:56px;border-radius:8px;margin-bottom:10px;border:1px solid #444;"></canvas>
+        <!-- Nº de cores -->
+        <div style="display:flex;gap:5px;margin-bottom:10px;align-items:center;">
+            <span style="font-size:9px;color:#888;margin-right:2px;">CORES:</span>
+            <button id="dg-n2" style="flex:1;padding:6px;border-radius:7px;border:2px solid #03dac6;background:#1e2e2e;color:#03dac6;font-weight:bold;font-size:12px;">2</button>
+            <button id="dg-n3" style="flex:1;padding:6px;border-radius:7px;border:1px solid #333;background:#2a2a2a;color:#888;font-weight:bold;font-size:12px;">3</button>
+            <button id="dg-n4" style="flex:1;padding:6px;border-radius:7px;border:1px solid #333;background:#2a2a2a;color:#888;font-weight:bold;font-size:12px;">4</button>
+        </div>
+        <!-- Seletores de cor dinâmicos -->
+        <div id="dg-cores-wrap" style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:10px;flex-wrap:nowrap;">
+            <div class="degrade-cor-wrap"><label>A</label><input type="color" id="dg-c0" value="#00cfff"></div>
+            <div style="color:#555;font-size:10px;">▸</div>
+            <div class="degrade-cor-wrap"><label>B</label><input type="color" id="dg-c1" value="#ff00ff"></div>
+            <div id="dg-sep2" style="color:#555;font-size:10px;display:none;">▸</div>
+            <div class="degrade-cor-wrap" id="dg-wrap2" style="display:none;"><label>C</label><input type="color" id="dg-c2" value="#ffff00"></div>
+            <div id="dg-sep3" style="color:#555;font-size:10px;display:none;">▸</div>
+            <div class="degrade-cor-wrap" id="dg-wrap3" style="display:none;"><label>D</label><input type="color" id="dg-c3" value="#00ff88"></div>
+        </div>
+        <!-- Tipo -->
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <button id="dg-btn-linear" style="flex:1;padding:7px;border-radius:8px;border:2px solid #03dac6;background:#1e2e2e;color:#03dac6;font-weight:bold;font-size:11px;">▬ LINEAR</button>
+            <button id="dg-btn-radial" style="flex:1;padding:7px;border-radius:8px;border:1px solid #333;background:#2a2a2a;color:#888;font-weight:bold;font-size:11px;">◎ RADIAL</button>
+        </div>
+        <!-- Preenchimento -->
+        <div style="display:flex;gap:6px;margin-bottom:12px;">
+            <button id="dg-btn-tela"   style="flex:1;padding:7px;border-radius:8px;border:2px solid #03dac6;background:#1e2e2e;color:#03dac6;font-weight:bold;font-size:10px;">⬛ TELA TODA</button>
+            <button id="dg-btn-camada" style="flex:1;padding:7px;border-radius:8px;border:1px solid #333;background:#2a2a2a;color:#888;font-weight:bold;font-size:10px;">✏️ CAMADA</button>
+        </div>
+        <div class="degrade-opcoes">
+            <button id="dg-btn-desenhar" class="degrade-btn aplicar">✓ DESENHAR</button>
+            <button id="dg-btn-cancelar" class="degrade-btn cancel">CANCELAR</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL SALVAR -->
+<div id="modal-salvar">
+    <div class="salvar-box">
+        <h3>💾 SALVAR</h3>
+        <div class="salvar-opcoes">
+            <button class="salvar-btn svg"  ontouchstart="event.stopPropagation();baixarSVG()" onclick="baixarSVG()">📐 Exportar SVG</button>
+            <button class="salvar-btn pdf"  ontouchstart="event.stopPropagation();baixarPDF()" onclick="baixarPDF()">📄 Exportar PDF</button>
+            <hr style="border-color:#333;margin:4px 0;">
+            <button class="salvar-btn proj" ontouchstart="event.stopPropagation();salvarProjeto()" onclick="salvarProjeto()">💾 Salvar no App</button>
+            <button class="salvar-btn load" ontouchstart="event.stopPropagation();abrirProjetos()" onclick="abrirProjetos()">📂 Meus Projetos</button>
+            <button class="salvar-btn cancel" ontouchstart="event.stopPropagation();fecharModalSalvar()" onclick="fecharModalSalvar()">CANCELAR</button>
+        </div>
+        <div id="lista-projetos" style="display:none;margin-top:12px;max-height:200px;overflow-y:auto;"></div>
+    </div>
+</div>
+<input type="file" id="f-projeto" accept=".tmaster" style="position:fixed;left:-9999px;visibility:hidden;">
+<div id="notificacao"></div>
+
+<!-- MODAL DUPLICAR CAMADA -->
+<div id="modal-duplicar" style="position:fixed;top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,0.88);display:none;align-items:center;justify-content:center;z-index:400;">
+    <div style="background:#1a1a1a;border:1px solid #03dac6;border-radius:18px;padding:22px;width:290px;max-width:92vw;">
+        <div style="font-size:15px;font-weight:900;color:#03dac6;margin-bottom:4px;">⧉ Duplicar Camada</div>
+        <div style="font-size:11px;color:#666;margin-bottom:16px;">Escolha o pincel para a camada duplicada</div>
+        <!-- Grid de pincéis -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:18px;">
+            <div class="dup-pincel-btn ativo" data-pincel="normal" onclick="selecionarPincelDup('normal',this)" style="background:#2a2a2a;border:2px solid #03dac6;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">✏️</div><div style="font-size:8px;color:#03dac6;font-weight:bold;margin-top:2px;">NORMAL</div>
+            </div>
+            <div class="dup-pincel-btn" data-pincel="neon" onclick="selecionarPincelDup('neon',this)" style="background:#2a2a2a;border:1px solid #333;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">💡</div><div style="font-size:8px;color:#888;font-weight:bold;margin-top:2px;">NEON</div>
+            </div>
+            <div class="dup-pincel-btn" data-pincel="marcador" onclick="selecionarPincelDup('marcador',this)" style="background:#2a2a2a;border:1px solid #333;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">🖊</div><div style="font-size:8px;color:#888;font-weight:bold;margin-top:2px;">MARCAD.</div>
+            </div>
+            <div class="dup-pincel-btn" data-pincel="oleo" onclick="selecionarPincelDup('oleo',this)" style="background:#2a2a2a;border:1px solid #333;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">🎨</div><div style="font-size:8px;color:#888;font-weight:bold;margin-top:2px;">ÓLEO</div>
+            </div>
+            <div class="dup-pincel-btn" data-pincel="tracejado" onclick="selecionarPincelDup('tracejado',this)" style="background:#2a2a2a;border:1px solid #333;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">〰️</div><div style="font-size:8px;color:#888;font-weight:bold;margin-top:2px;">TRACEJ.</div>
+            </div>
+            <div class="dup-pincel-btn" data-pincel="caligrafia" onclick="selecionarPincelDup('caligrafia',this)" style="background:#2a2a2a;border:1px solid #333;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">🖋️</div><div style="font-size:8px;color:#888;font-weight:bold;margin-top:2px;">CALIGR.</div>
+            </div>
+            <div class="dup-pincel-btn" data-pincel="duplo" onclick="selecionarPincelDup('duplo',this)" style="background:#2a2a2a;border:1px solid #333;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">⟺</div><div style="font-size:8px;color:#888;font-weight:bold;margin-top:2px;">DUPLO</div>
+            </div>
+            <div class="dup-pincel-btn" data-pincel="lasso" onclick="selecionarPincelDup('lasso',this)" style="background:#2a2a2a;border:1px solid #333;border-radius:9px;padding:8px 4px;text-align:center;cursor:pointer;">
+                <div style="font-size:16px;">🔲</div><div style="font-size:8px;color:#888;font-weight:bold;margin-top:2px;">LASSO</div>
+            </div>
+        </div>
+        <!-- Botões de ação -->
+        <div style="display:flex;flex-direction:column;gap:9px;">
+            <button onclick="confirmarDuplicar(true)" style="background:linear-gradient(135deg,#03dac6,#00a896);color:#000;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:900;width:100%;">⧉ DUPLICAR COM PINCEL ESCOLHIDO</button>
+            <button onclick="confirmarDuplicar(false)" style="background:#333;color:#ccc;border:none;border-radius:10px;padding:11px;font-size:12px;font-weight:bold;width:100%;">DUPLICAR SEM MUDAR PINCEL</button>
+            <button onclick="fecharModalDuplicar()" style="background:transparent;color:#555;border:1px solid #333;border-radius:10px;padding:9px;font-size:11px;width:100%;">CANCELAR</button>
+        </div>
+    </div>
+</div>
+<style>
+#modal-duplicar.aberto { display:flex !important; }
+.dup-pincel-btn.ativo { border:2px solid #03dac6 !important; background:#1e2e2e !important; }
+.dup-pincel-btn.ativo div:last-child { color:#03dac6 !important; }
+</style>
+
+<!-- MODAL FORMAS -->
+<div id="modal-formas" style="display:none;position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+    background:#222;border:1px solid #03dac6;border-radius:12px;padding:12px;z-index:50;
+    display:none;flex-direction:row;gap:10px;align-items:center;">
+    <button onclick="selecionarForma('circulo')"  id="fBtn-circulo"  style="background:#333;color:white;border:none;padding:8px 12px;border-radius:6px;font-size:18px;">⬤</button>
+    <button onclick="selecionarForma('retangulo')" id="fBtn-retangulo" style="background:#333;color:white;border:none;padding:8px 12px;border-radius:6px;font-size:18px;">▬</button>
+    <button onclick="selecionarForma('triangulo')" id="fBtn-triangulo" style="background:#333;color:white;border:none;padding:8px 12px;border-radius:6px;font-size:18px;">▲</button>
+    <button onclick="selecionarForma('linha')"     id="fBtn-linha"     style="background:#333;color:white;border:none;padding:8px 12px;border-radius:6px;font-size:18px;">╱</button>
+    <button onclick="fecharFormas()" style="background:#555;color:white;border:none;padding:8px 10px;border-radius:6px;font-size:12px;">✕</button>
+</div>
+
+<!-- MODAL NOVO PROJETO -->
+<div id="modal-novo-projeto">
+    <div class="novo-proj-box">
+        <h3>✨ Novo Projeto</h3>
+        <div class="tipo-cards">
+            <div class="tipo-card ativo" id="card-finito">
+                <div class="tipo-card-icon">📄</div>
+                <div class="tipo-card-nome">Folha</div>
+                <div class="tipo-card-desc">Tamanho fixo, ideal para exportar</div>
+            </div>
+            <div class="tipo-card" id="card-infinito">
+                <div class="tipo-card-icon">♾️</div>
+                <div class="tipo-card-nome">Infinito</div>
+                <div class="tipo-card-desc">Canvas sem limites, fundo escuro</div>
+            </div>
+        </div>
+        <!-- Grade -->
+        <div style="background:#222;border-radius:12px;padding:12px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                    <div style="font-size:13px;color:#ccc;font-weight:bold;">⊞ Grade quadriculada</div>
+                    <div style="font-size:10px;color:#555;margin-top:2px;">Guia visual, não exportada</div>
+                </div>
+                <label class="toggle-wrap">
+                    <input type="checkbox" id="chk-grade">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <!-- Tamanho da grade (aparece só quando ativada) -->
+            <div id="grade-size-wrap" style="display:none;margin-top:10px;">
+                <div style="font-size:10px;color:#888;margin-bottom:6px;">Tamanho da célula:</div>
+                <div class="grade-opts">
+                    <div class="grade-size-btn ativo" id="gs-20">20px</div>
+                    <div class="grade-size-btn" id="gs-40">40px</div>
+                    <div class="grade-size-btn" id="gs-80">80px</div>
+                    <div class="grade-size-btn" id="gs-100">100px</div>
+                </div>
+            </div>
+        </div>
+        <button class="novo-proj-btn" id="btn-confirmar-novo-proj">✏️ CRIAR</button>
+        <button class="novo-proj-cancel" id="btn-cancelar-novo-proj">Cancelar</button>
+    </div>
+</div>
+
+<!-- INDICADOR MODO INFINITO -->
+<div id="indicador-rotacao" style="display:none;position:fixed;top:50px;left:50%;transform:translateX(-50%);
+    background:rgba(0,0,0,0.75);color:#03dac6;font-size:13px;font-weight:bold;
+    padding:5px 14px;border-radius:20px;border:1px solid #03dac6;
+    pointer-events:none;z-index:30;letter-spacing:1px;">0°</div>
+<div id="indicador-infinito">♾️ Papel infinito v3</div>
+
+<!-- TELA DE LOGIN -->
+<div id="tela-login">
+    <div class="login-icon">🎨</div>
+    <div class="login-logo">TraceMaster</div>
+    <div class="login-sub">Vetorização & Design Profissional</div>
+    <div class="login-card">
+        <h3>Entre na sua conta</h3>
+        <button class="btn-google" id="btn-login-google">
+            <img src="https://www.google.com/favicon.ico" alt="Google">
+            Continuar com Google
+        </button>
+        <div class="login-divider">ou</div>
+        <input class="login-input" type="email" id="login-email" placeholder="E-mail">
+        <input class="login-input" type="password" id="login-senha" placeholder="Senha">
+        <div class="login-erro" id="login-erro"></div>
+        <button class="btn-login-email" id="btn-login-email">Entrar</button>
+        <button class="btn-login-criar" id="btn-criar-conta">Criar conta</button>
+        <button id="btn-demo" style="background:transparent;border:none;color:#555;font-size:11px;padding:8px;cursor:pointer;width:100%;margin-top:4px;">Continuar sem conta (modo demo)</button>
+    </div>
+    <div class="login-versao">v3.0</div>
+</div>
+
+<!-- MODAL PERFIL & CONFIGURAÇÕES -->
+<div id="modal-perfil">
+    <div class="perfil-box">
+        <div class="perfil-header">
+            <h3>👤 Perfil & Config</h3>
+            <button onclick="fecharPerfil()" style="background:none;border:none;color:#888;font-size:20px;">✕</button>
+        </div>
+        <!-- Avatar e nome -->
+        <div class="perfil-avatar-wrap">
+            <img class="perfil-avatar" id="perfil-avatar-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='40' r='22' fill='%23555'/%3E%3Ccircle cx='50' cy='90' r='35' fill='%23555'/%3E%3C/svg%3E">
+            <div class="perfil-nome-display" id="perfil-nome-display">Usuário</div>
+            <div class="perfil-email-display" id="perfil-email-display">—</div>
+        </div>
+        <!-- Seção: Perfil -->
+        <div class="perfil-secao">
+            <div class="perfil-secao-titulo">✏️ Editar Perfil</div>
+            <div class="config-item">
+                <div><div class="config-label">Nome</div></div>
+                <input id="cfg-nome" style="background:#2a2a2a;border:1px solid #444;border-radius:8px;padding:6px 10px;color:white;font-size:12px;width:160px;outline:none;" placeholder="Seu nome">
+            </div>
+            <div class="config-item">
+                <div><div class="config-label">Foto de perfil</div><div class="config-desc">URL de imagem</div></div>
+                <input id="cfg-foto" style="background:#2a2a2a;border:1px solid #444;border-radius:8px;padding:6px 10px;color:white;font-size:11px;width:140px;outline:none;" placeholder="https://...">
+            </div>
+        </div>
+        <!-- Seção: Aparência -->
+        <div class="perfil-secao">
+            <div class="perfil-secao-titulo">🎨 Aparência</div>
+            <div class="config-item">
+                <div><div class="config-label">Tema</div></div>
+                <div class="tema-opts">
+                    <div class="tema-opt ativo" id="tema-escuro" ontouchstart="setTema('escuro')">🌙 Escuro</div>
+                    <div class="tema-opt" id="tema-claro" ontouchstart="setTema('claro')">☀️ Claro</div>
+                </div>
+            </div>
+            <div class="config-item">
+                <div><div class="config-label">Cor de destaque</div><div class="config-desc">Botões e bordas</div></div>
+                <input type="color" class="config-color" id="cfg-accent" value="#03dac6">
+            </div>
+        </div>
+        <!-- Seção: Folha de trabalho -->
+        <div class="perfil-secao">
+            <div class="perfil-secao-titulo">📄 Folha de Trabalho</div>
+            <div class="config-item">
+                <div><div class="config-label">Tamanho</div></div>
+                <select class="config-select" id="cfg-folha">
+                    <option value="800x1000">A4 Retrato (800×1000)</option>
+                    <option value="1000x800">A4 Paisagem (1000×800)</option>
+                    <option value="800x800">Quadrado (800×800)</option>
+                    <option value="1080x1920">Story (1080×1920)</option>
+                    <option value="1920x1080">Widescreen (1920×1080)</option>
+                </select>
+            </div>
+        </div>
+        <!-- Seção: Idioma -->
+        <div class="perfil-secao">
+            <div class="perfil-secao-titulo">🌐 Idioma</div>
+            <div class="config-item">
+                <div><div class="config-label">Idioma da interface</div></div>
+                <select class="config-select" id="cfg-idioma">
+                    <option value="pt">🇧🇷 Português</option>
+                    <option value="en">🇺🇸 English</option>
+                    <option value="es">🇪🇸 Español</option>
+                </select>
+            </div>
+        </div>
+        <button class="btn-salvar-perfil" id="btn-salvar-cfg">💾 Salvar configurações</button>
+        <button class="btn-logout" id="btn-logout">Sair da conta</button>
+    </div>
+</div>
+
+<!-- TELA INICIAL -->
+<div id="tela-inicial" style="display:none;">
+    <button id="btn-perfil-inicial" onclick="abrirPerfil()" title="Perfil">
+        <img id="avatar-inicial" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='40' r='22' fill='%23888'/%3E%3Ccircle cx='50' cy='90' r='35' fill='%23888'/%3E%3C/svg%3E">
+    </button>
+    <div class="logo">TraceMaster</div>
+    <div class="subtitulo">Vetorização & Design Profissional</div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+        <button class="btn-comecar" onclick="abrirModalNovoProjeto()">✏️ NOVO PROJETO</button>
+        <button class="btn-comecar" onclick="abrirManual()" style="background:linear-gradient(135deg,#333,#444);box-shadow:0 0 20px rgba(255,255,255,0.08);">📖 MANUAL</button>
+    </div>
+    <div id="projetos-lista-inicial" style="width:90%;max-width:340px;margin-top:8px;max-height:50vh;overflow-y:auto;"></div>
+    <div class="versao">v7 ✓</div>
+</div>
+
+<!-- MODAL MANUAL -->
+<div id="modal-manual" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:2000;overflow-y:auto;padding:20px;box-sizing:border-box;">
+    <div style="max-width:400px;margin:0 auto;padding-bottom:40px;">
+        <!-- Header -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;position:sticky;top:0;background:rgba(0,0,0,0.95);padding:10px 0;z-index:1;">
+            <div style="font-size:18px;font-weight:900;background:linear-gradient(135deg,#03dac6,#ff00ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">📖 Manual TraceMaster</div>
+            <button onclick="fecharManual()" style="background:#333;border:none;color:white;width:36px;height:36px;border-radius:50%;font-size:16px;">✕</button>
+        </div>
+
+        <!-- Navegação por seções -->
+        <div id="manual-nav" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px;">
+            <button class="manual-nav-btn ativa" ontouchstart="irSecao(0)">🖊 Desenho</button>
+            <button class="manual-nav-btn" ontouchstart="irSecao(1)">🖌 Pincéis</button>
+            <button class="manual-nav-btn" ontouchstart="irSecao(2)">👁 Vista</button>
+            <button class="manual-nav-btn" ontouchstart="irSecao(3)">☰ Camadas</button>
+            <button class="manual-nav-btn" ontouchstart="irSecao(4)">📷 Foto</button>
+            <button class="manual-nav-btn" ontouchstart="irSecao(5)">💾 Projeto</button>
+        </div>
+
+        <!-- SEÇÃO 0: FERRAMENTAS DE DESENHO -->
+        <div class="manual-secao" id="msec-0">
+            <div class="manual-secao-titulo">✏️ Ferramentas de Desenho</div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#ff00ff;">🖊</span><span class="manual-card-nome">PEN TOOL</span></div>
+                <p class="manual-desc">Cria caminhos vetoriais com pontos de ancoragem precisos. Cada toque adiciona um ponto. Arraste um ponto existente para mover. Toque duplo rápido para fechar/cortar.</p>
+                <div class="manual-dica">💡 Use o botão <b>FECHAR</b> no menu PROJETO para fechar o caminho em forma</div>
+            </div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#03dac6;">✏️</span><span class="manual-card-nome">LIVRE</span></div>
+                <p class="manual-desc">Desenho à mão livre com o dedo. Escolha o pincel no menu PINCEL para variar o estilo do traço. Ideal para esboços rápidos.</p>
+                <div class="manual-dica">💡 Combine com ESPELHO para desenho simétrico automático</div>
+            </div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#ff6600;">🧹</span><span class="manual-card-nome">BORRACHA</span></div>
+                <p class="manual-desc">Marca dois pontos na tela para definir uma linha de corte. Os caminhos que cruzarem essa linha serão cortados. Toque duplo para aplicar o corte.</p>
+                <div class="manual-dica">💡 O botão ↩ remove o último ponto marcado</div>
+            </div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#aa00ff;">⬡</span><span class="manual-card-nome">FORMA</span></div>
+                <p class="manual-desc">Arraste na tela para desenhar formas geométricas: círculo, retângulo, triângulo ou linha. Escolha a forma no menu que aparece.</p>
+            </div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#03dac6;">⊹</span><span class="manual-card-nome">SELEÇÃO</span></div>
+                <p class="manual-desc">Toque em qualquer elemento para selecioná-lo, depois arraste para mover. O ✕ vermelho exclui o elemento selecionado.</p>
+            </div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#333;">T</span><span class="manual-card-nome">TEXTO</span></div>
+                <p class="manual-desc">Toque na tela para posicionar o texto. Escolha a fonte, tamanho, cor e opcionalmente degradê ou contorno. Após inserido, arraste para reposicionar.</p>
+                <div class="manual-dica">💡 Toque num texto existente para editar ou mover</div>
+            </div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#e74c3c;">🎨</span><span class="manual-card-nome">DEGRADÊ</span></div>
+                <p class="manual-desc">Arraste na tela para definir direção e tamanho do degradê. Após criar, as bolinhas A e B permitem ajustar os pontos de início e fim. Suporta 2 a 4 cores.</p>
+                <div class="manual-dica">💡 Use "CAMADA" para aplicar o degradê só nos traços desenhados</div>
+            </div>
+
+            <div class="manual-card">
+                <div class="manual-card-header"><span class="manual-icon" style="background:#ffaa00;">✎</span><span class="manual-card-nome">EDITAR</span></div>
+                <p class="manual-desc">Toque em um caminho da Pen Tool para entrar no modo de edição dos seus pontos. Arraste os pontos para reposicioná-los. Toque em um ponto para alternar entre âncora e curva.</p>
+            </div>
+        </div>
+
+        <!-- SEÇÃO 1: PINCÉIS -->
+        <div class="manual-secao" id="msec-1" style="display:none;">
+            <div class="manual-secao-titulo">🖌 Pincéis</div>
+            <p style="font-size:12px;color:#888;margin-bottom:12px;">Acesse pelo botão <b>PINCEL</b> na barra. Os pincéis só funcionam na ferramenta LIVRE.</p>
+
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">✏️</span><span class="manual-card-nome">Normal</span></div><p class="manual-desc">Traço limpo e uniforme. O mais preciso para contornos.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">▬</span><span class="manual-card-nome">Marcador</span></div><p class="manual-desc">Traço flat sem transparência, como um marcador físico.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">╌</span><span class="manual-card-nome">Tracejado</span></div><p class="manual-desc">Linha pontilhada. O tamanho do pincel controla o espaçamento.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">𝒞</span><span class="manual-card-nome">Caligrafia</span></div><p class="manual-desc">Varia a espessura conforme a direção do traço, imitando uma pena caligráfica.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">💧</span><span class="manual-card-nome">Aquarela</span></div><p class="manual-desc">Transparência suave com bordas esfumadas. Ideal para sombras.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">▓</span><span class="manual-card-nome">Carvão</span></div><p class="manual-desc">Textura granulada irregular, imita carvão ou grafite.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">☁</span><span class="manual-card-nome">Giz</span></div><p class="manual-desc">Suave e esfumado, como giz de cera ou pastel.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">🌟</span><span class="manual-card-nome">Neon</span></div><p class="manual-desc">Traço luminoso com brilho ao redor. Ótimo em fundos escuros.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">💨</span><span class="manual-card-nome">Spray</span></div><p class="manual-desc">Pontos espalhados em área. Simula aerossol ou spray.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">〰</span><span class="manual-card-nome">Pelo / Cabelo</span></div><p class="manual-desc">Múltiplas linhas paralelas finas. Ideal para texturas de cabelo ou pelo.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">✦</span><span class="manual-card-nome">Estrela</span></div><p class="manual-desc">Faíscas e brilhos ao longo do traço.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">⬭</span><span class="manual-card-nome">Lasso</span></div><p class="manual-desc">Contorno suavizado com pressão variável nas pontas.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">·</span><span class="manual-card-nome">Pontilhismo</span></div><p class="manual-desc">Pontos circulares ao longo do traço. Tamanho controla espaçamento.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">////</span><span class="manual-card-nome">Risco</span></div><p class="manual-desc">Hachura irregular, como riscar com lápis rápido.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">∥</span><span class="manual-card-nome">Duplo</span></div><p class="manual-desc">Duas linhas paralelas simultâneas. Ótimo para contornos duplos.</p></div>
+        </div>
+
+        <!-- SEÇÃO 2: VISTA -->
+        <div class="manual-secao" id="msec-2" style="display:none;">
+            <div class="manual-secao-titulo">👁 Vista & Navegação</div>
+
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">👌</span><span class="manual-card-nome">Zoom / Rotação</span></div><p class="manual-desc">Use dois dedos para dar zoom e rotacionar a folha livremente. O snap automático trava em 0°, 90°, 180° e 270°.</p><div class="manual-dica">💡 A folha nunca sai completamente da tela</div></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">☝️</span><span class="manual-card-nome">Pan (mover tela)</span></div><p class="manual-desc">Com um dedo fora de qualquer ferramenta ativa, arraste para mover a visão da folha.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">⟳</span><span class="manual-card-nome">RESET</span></div><p class="manual-desc">Volta a folha para a posição e zoom padrão, sem rotação.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">🔒</span><span class="manual-card-nome">MOVER</span></div><p class="manual-desc">Trava o pan com 1 dedo. Útil para desenhar sem mover a folha sem querer.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">⟺</span><span class="manual-card-nome">ESPELHO</span></div><p class="manual-desc">Tudo que você desenhar à esquerda do centro aparece espelhado à direita automaticamente.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">📐</span><span class="manual-card-nome">RÉGUA</span></div><p class="manual-desc">Exibe réguas nas bordas e permite criar guias — arraste a régua para soltar uma linha guia na tela.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">◻</span><span class="manual-card-nome">OUTLINE</span></div><p class="manual-desc">Mostra todos os traços sem cor, só o contorno vetorial. Útil para conferir os caminhos.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">🧲</span><span class="manual-card-nome">SNAP</span></div><p class="manual-desc">Os pontos da Pen Tool se magnetizam aos pontos próximos para encaixe preciso.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">💧</span><span class="manual-card-nome">CONTA-GOTAS</span></div><p class="manual-desc">Toque em qualquer área da tela para capturar a cor daquele ponto e usá-la como cor ativa.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">⏱</span><span class="manual-card-nome">HISTÓRICO</span></div><p class="manual-desc">Painel lateral com todas as ações. Toque numa ação anterior para voltar àquele estado.</p></div>
+        </div>
+
+        <!-- SEÇÃO 3: CAMADAS -->
+        <div class="manual-secao" id="msec-3" style="display:none;">
+            <div class="manual-secao-titulo">☰ Camadas</div>
+            <p style="font-size:12px;color:#888;margin-bottom:12px;">Acesse pelo botão <b>CAMADAS</b> na barra. O painel desliza da direita.</p>
+
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">+</span><span class="manual-card-nome">Nova Camada</span></div><p class="manual-desc">Cria uma camada vazia no topo da pilha. Cada camada tem seus próprios traços independentes.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">👁</span><span class="manual-card-nome">Visibilidade</span></div><p class="manual-desc">O botão 👁 mostra ou oculta a camada. Camadas ocultas não são exportadas.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">≋</span><span class="manual-card-nome">Opacidade</span></div><p class="manual-desc">O slider OPAC controla a transparência da camada inteira, de 0% a 100%.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">↕</span><span class="manual-card-nome">Reordenar</span></div><p class="manual-desc">Segure e arraste uma camada para mudar sua posição na pilha. Camadas do topo ficam na frente.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">✕</span><span class="manual-card-nome">Deletar</span></div><p class="manual-desc">Remove a camada e todo seu conteúdo. Não pode desfazer — cuidado!</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">📷</span><span class="manual-card-nome">Camada Foto</span></div><p class="manual-desc">Camada especial bloqueada que contém a vetorização da foto importada. Sempre fica abaixo das outras.</p></div>
+            <div class="manual-dica" style="margin-top:8px;">⚠️ Ao trocar de camada durante o uso da Pen Tool, o caminho atual é salvo automaticamente na camada anterior.</div>
+        </div>
+
+        <!-- SEÇÃO 4: FOTO -->
+        <div class="manual-secao" id="msec-4" style="display:none;">
+            <div class="manual-secao-titulo">📷 Importar & Vetorizar Foto</div>
+
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">📷</span><span class="manual-card-nome">Importar Foto</span></div><p class="manual-desc">Toque em COR → ícone 📷 ou no menu PROJETO → FOTO. Escolha uma imagem da galeria.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">✨</span><span class="manual-card-nome">Auto Vetorizar</span></div><p class="manual-desc">O app analisa a imagem e configura automaticamente o contraste, brilho e número de cores para o melhor resultado.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">🎨</span><span class="manual-card-nome">Nº de Cores</span></div><p class="manual-desc">Escolha 1, 2 ou 3 cores para a vetorização. 1 cor = só contorno preto. Mais cores = mais detalhes.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">⚙️</span><span class="manual-card-nome">Ajustes</span></div><p class="manual-desc"><b>Contraste:</b> aumenta a diferença entre claro e escuro.<br><b>Brilho:</b> clareia ou escurece a imagem antes de vetorizar.<br><b>Suavizar:</b> reduz ruídos e detalhes finos.<br><b>Ruído:</b> remove pequenos fragmentos do vetor final.</p></div>
+            <div class="manual-dica">💡 Para lineart (desenho em papel), use 1 cor preta com contraste alto e suavizar baixo</div>
+        </div>
+
+        <!-- SEÇÃO 5: PROJETO -->
+        <div class="manual-secao" id="msec-5" style="display:none;">
+            <div class="manual-secao-titulo">💾 Projeto & Exportação</div>
+
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">💾</span><span class="manual-card-nome">Salvar no App</span></div><p class="manual-desc">Salva o projeto localmente no dispositivo com nome personalizado. Aparece na tela inicial para abrir depois.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">📐</span><span class="manual-card-nome">Exportar SVG</span></div><p class="manual-desc">Gera um arquivo SVG vetorial puro — pode ser aberto em Illustrator, Inkscape ou qualquer editor vetorial.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">📄</span><span class="manual-card-nome">Exportar PDF</span></div><p class="manual-desc">Gera um PDF no tamanho exato da folha de trabalho, pronto para impressão.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">↩↪</span><span class="manual-card-nome">Desfazer / Refazer</span></div><p class="manual-desc">↩ desfaz a última ação. ↪ refaz. Histórico de até 50 ações. Durante a Pen Tool, ↩ remove o último ponto colocado.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">📄♾️</span><span class="manual-card-nome">Tipos de Projeto</span></div><p class="manual-desc"><b>Folha:</b> tamanho fixo ideal para exportar (A4, quadrado, story…)<br><b>Infinito:</b> canvas sem limites para projetos livres.</p></div>
+            <div class="manual-dica">💡 O app salva um rascunho automático a cada traço — você nunca perde trabalho por acidente</div>
+        </div>
+
+        <div style="height:20px;"></div>
+    </div>
+</div>
+
+<!-- PAINEL DE CAMADAS -->
+<div id="painel-camadas">
+    <div id="painel-header">
+        <span>☰ CAMADAS</span>
+        <button id="btn-nova-camada" onclick="novaCamada()">+ NOVA</button>
+        <button id="btn-fechar-painel" onclick="togglePainel()">✕</button>
+    </div>
+    <div id="dica-camadas">segure e arraste qualquer camada para reordenar</div>
+    <div id="lista-camadas"></div>
+</div>
+
+<div id="modal">
+    <div class="modal-box" style="width:300px;max-width:95vw;">
+        <h3 style="color:#03dac6;margin:0 0 6px;font-size:14px;">🎨 CONFIGURAR VETORIZAÇÃO</h3>
+        <!-- Tag de tipo detectado + paleta automática -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+            <span id="tm-tipo-img-tag" style="display:none;" class="tm-tag-tipo-img">📷 Foto</span>
+            <div id="tm-paleta-wrap" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;">
+                <span class="tm-paleta-titulo">PALETA:</span>
+                <div id="tm-paleta-cores" style="display:flex;gap:5px;"></div>
+            </div>
+        </div>
+
+        <!-- Pré-visualização -->
+        <canvas id="preview-canvas" style="width:100%;border-radius:8px;border:1px solid #444;margin-bottom:12px;max-height:160px;object-fit:contain;background:#111;"></canvas>
+
+        <!-- Cores auto-detectadas — sem seletor manual -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+            <span style="font-size:10px;color:#888;min-width:60px;">CORES</span>
+            <span id="tm-cores-auto-count" style="font-size:11px;color:#03dac6;font-weight:800;">— clique em AUTO VETORIZAR</span>
+        </div>
+
+        <!-- Inputs internos de cor (compatibilidade com JS — ocultos da UI) -->
+        <div style="display:none;">
+            <input type="color" id="modal-color"  value="#000000">
+            <input type="color" id="modal-color2" value="#888888">
+            <input type="color" id="modal-color3" value="#444444">
+            <div id="nc-1"></div><div id="nc-2"></div><div id="nc-3"></div>
+        </div>
+
+        <!-- Contraste -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="font-size:10px;color:#888;min-width:60px;">CONTRASTE</span>
+            <input type="range" id="pre-contraste" min="50" max="300" value="150" style="flex:1;accent-color:#03dac6;" oninput="atualizarPreviewVetor()">
+            <span id="pre-contraste-val" style="font-size:9px;color:#03dac6;min-width:28px;">150%</span>
+        </div>
+
+        <!-- Brilho -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="font-size:10px;color:#888;min-width:60px;">BRILHO</span>
+            <input type="range" id="pre-brilho" min="50" max="200" value="100" style="flex:1;accent-color:#03dac6;" oninput="atualizarPreviewVetor()">
+            <span id="pre-brilho-val" style="font-size:9px;color:#03dac6;min-width:28px;">100%</span>
+        </div>
+
+        <!-- Blur (suavização) -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="font-size:10px;color:#888;min-width:60px;">SUAVIZAR</span>
+            <input type="range" id="pre-blur" min="0" max="5" step="0.5" value="1" style="flex:1;accent-color:#03dac6;" oninput="atualizarPreviewVetor()">
+            <span id="pre-blur-val" style="font-size:9px;color:#03dac6;min-width:28px;">1px</span>
+        </div>
+
+        <!-- Limpeza de ruído -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+            <span style="font-size:10px;color:#888;min-width:60px;">RUÍDO</span>
+            <input type="range" id="pre-pathomit" min="4" max="64" value="16" style="flex:1;accent-color:#03dac6;">
+            <span id="pre-pathomit-val" style="font-size:9px;color:#03dac6;min-width:28px;">16</span>
+        </div>
+
+        <div style="display:flex;gap:8px;">
+            <button id="btn-auto-vetor" onclick="autoVetorizar()">✨ AUTO VETORIZAR</button>
+            <button id="btn-vetorizar-modal" style="flex:1;padding:11px;background:linear-gradient(135deg,#03dac6,#00a896);color:#000;border:none;border-radius:8px;font-weight:800;font-size:13px;">🚀 VETORIZAR</button>
+            <button onclick="document.getElementById('modal').style.display='none'" style="padding:11px 14px;background:#333;color:#aaa;border:none;border-radius:8px;font-size:12px;">✕</button>
+        </div>
+    </div>
+</div>
+
+<!-- menu-pinceis original movido para dentro do popup-pinceis-wrap -->
+<!-- menu-ferramentas original substituído pelo popup-desenho -->
+<!-- IDs mantidos para compatibilidade com JS (o JS busca esses elementos) -->
+<div id="menu-ferramentas" style="display:none;position:fixed;left:-9999px;">
+    <button id="fBtn-pen"></button>
+    <button id="fBtn-livre"></button>
+    <button id="fBtn-borracha"></button>
+</div>
+
+<div id="dica-editar">👆 Toque em um caminho para editar</div>
+
+<div id="viewport">
+    <div id="work-surface">
+        <svg id="grade-layer" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="svg-render-area"></div>
+        <svg id="draw-layer" xmlns="http://www.w3.org/2000/svg"></svg>
+        <canvas id="outline-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:12;display:none;"></canvas>
+        <svg id="pen-layer" xmlns="http://www.w3.org/2000/svg"></svg>
+
+<div id="btn-confirmar-pen" style="
+            display:none; position:absolute; z-index:9999;
+            width:80px; height:80px; border-radius:50%;
+            background:transparent;
+            cursor:pointer; align-items:center; justify-content:center;
+            transform:translate(-50%,-50%);
+            pointer-events:all;
+            touch-action:none;
+        "><div style="
+            width:40px; height:40px; border-radius:50%;
+            background:linear-gradient(135deg,#03dac6,#00a896);
+            border:2px solid white;
+            box-shadow:0 2px 12px rgba(3,218,198,0.6);
+            display:flex; align-items:center; justify-content:center;
+            font-size:20px; color:white; font-weight:900;
+            pointer-events:none;
+        ">✓</div></div>
+        <svg id="livre-layer" xmlns="http://www.w3.org/2000/svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></svg>
+        <svg id="forma-preview"   xmlns="http://www.w3.org/2000/svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></svg>
+        <svg id="borracha-layer" xmlns="http://www.w3.org/2000/svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></svg>
+        <svg id="degrade-preview-layer" xmlns="http://www.w3.org/2000/svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></svg>
+        <!-- Novas ferramentas -->
+        <svg id="selecao-layer" xmlns="http://www.w3.org/2000/svg"></svg>
+        <svg id="texto-layer" xmlns="http://www.w3.org/2000/svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></svg>
+    </div>
+</div>
+<!-- ── HANDLES DE SELEÇÃO HTML — fora do work-surface para toques confiáveis ── -->
+<div id="sel-handle-tl" class="sel-handle-html" data-corner="tl" style="display:none"></div>
+<div id="sel-handle-tr" class="sel-handle-html" data-corner="tr" style="display:none"></div>
+<div id="sel-handle-bl" class="sel-handle-html" data-corner="bl" style="display:none"></div>
+<div id="sel-handle-br" class="sel-handle-html" data-corner="br" style="display:none"></div>
+<div id="sel-handle-rot" class="sel-handle-html-rot" style="display:none">↻</div>
+<!-- Régua, guias e espelho FORA do work-surface — fixados na tela -->
+<!-- Bolinhas de ajuste do degradê — FORA do work-surface para position:fixed funcionar -->
+<div id="dg-bolinha-a" style="display:none;position:fixed;width:52px;height:52px;border-radius:50%;
+    background:#03dac6;border:3px solid white;
+    box-shadow:0 0 0 2px #03dac6,0 3px 10px rgba(0,0,0,0.6);
+    z-index:500;touch-action:none;pointer-events:all;
+    font-size:13px;font-weight:900;color:#000;
+    display:none;align-items:center;justify-content:center;">A</div>
+<div id="dg-bolinha-b" style="display:none;position:fixed;width:52px;height:52px;border-radius:50%;
+    background:#ff00ff;border:3px solid white;
+    box-shadow:0 0 0 2px #ff00ff,0 3px 10px rgba(0,0,0,0.6);
+    z-index:500;touch-action:none;pointer-events:all;
+    font-size:13px;font-weight:900;color:#fff;
+    display:none;align-items:center;justify-content:center;">B</div>
+<!-- Bolinhas menores para degradê de texto -->
+<div id="txt-dg-bolinha-a" style="display:none;position:fixed;width:32px;height:32px;border-radius:50%;
+    background:#03dac6;border:2px solid white;
+    box-shadow:0 0 0 2px #03dac6,0 2px 8px rgba(0,0,0,0.6);
+    z-index:500;touch-action:none;pointer-events:all;
+    font-size:10px;font-weight:900;color:#000;
+    align-items:center;justify-content:center;">A</div>
+<div id="txt-dg-bolinha-b" style="display:none;position:fixed;width:32px;height:32px;border-radius:50%;
+    background:#ff00ff;border:2px solid white;
+    box-shadow:0 0 0 2px #ff00ff,0 2px 8px rgba(0,0,0,0.6);
+    z-index:500;touch-action:none;pointer-events:all;
+    font-size:10px;font-weight:900;color:#fff;
+    display:none;align-items:center;justify-content:center;">B</div>
+<!-- Botão editar texto — círculo flutuante que aparece ao tocar num texto -->
+<div id="btn-editar-texto" style="display:none;position:fixed;width:38px;height:38px;border-radius:50%;
+    background:#ffaa00;border:3px solid white;
+    box-shadow:0 0 0 2px #ffaa00,0 3px 10px rgba(0,0,0,0.6);
+    z-index:550;touch-action:none;pointer-events:all;
+    font-size:16px;align-items:center;justify-content:center;">✏️</div>
+<!-- Botão confirmar degradê — flutuante fixo no centro inferior -->
+<div id="btn-confirmar-degrade" style="display:none;position:fixed;
+    bottom:100px; left:50%; transform:translateX(-50%);
+    background:linear-gradient(135deg,#03dac6,#00a896);
+    color:#000;border:none;border-radius:30px;padding:13px 32px;font-size:15px;
+    font-weight:900;z-index:600;box-shadow:0 4px 20px rgba(3,218,198,0.6);cursor:pointer;
+    letter-spacing:1px; white-space:nowrap;">✓ SALVAR DEGRADÊ</div>
+<div id="regua-h"></div>
+<div id="regua-v"></div>
+<div id="guias-layer" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:20;display:none;"></div>
+<div id="espelho-line" style="position:fixed;top:0;left:50%;width:2px;height:100%;background:rgba(3,218,198,0.5);pointer-events:none;display:none;border-left:2px dashed rgba(3,218,198,0.6);z-index:20;"></div>
+<!-- Conta-gotas cursor -->
+<div id="conta-gotas-cursor"></div>
+
+<!-- MODAL TEXTO -->
+<div id="modal-texto">
+    <div class="texto-box">
+        <h3>✏️ Adicionar Texto</h3>
+        <textarea id="texto-input" placeholder="Digite seu texto..."></textarea>
+        <div class="texto-ctrl" style="flex-direction:column;align-items:flex-start;gap:4px;">
+            <label>FONTE:</label>
+            <select id="fonte-select" style="width:100%;background:#2a2a2a;color:white;border:1px solid #444;border-radius:7px;padding:5px 8px;font-size:12px;outline:none;">
+                <optgroup label="── Sistema (offline) ──">
+                <option value="sans-serif">Sans-serif</option>
+                <option value="serif">Serif</option>
+                <option value="monospace">Monospace</option>
+                <option value="cursive">Cursive</option>
+                <option value="fantasy">Fantasy</option>
+                <option value="Arial Black">Arial Black — impacto</option>
+                <option value="Georgia">Georgia — elegante</option>
+                <option value="Impact">Impact — forte</option>
+                <option value="Trebuchet MS">Trebuchet MS — moderna</option>
+                <option value="Courier New">Courier New — máquina</option>
+                <option value="Palatino">Palatino — clássica</option>
+                <option value="Garamond">Garamond — refinada</option>
+                <option value="Comic Sans MS">Comic Sans — informal</option>
+                <option value="Arial Narrow">Arial Narrow — condensada</option>
+                </optgroup>
+                <optgroup label="── Google Fonts (online) ──">
+                <option value="Bebas Neue">Bebas Neue — impacto</option>
+                <option value="Righteous">Righteous — geométrica</option>
+                <option value="Fredoka One">Fredoka One — amigável</option>
+                <option value="Pacifico">Pacifico — cursiva surf</option>
+                <option value="Lobster">Lobster — retro elegante</option>
+                <option value="Press Start 2P">Press Start 2P — pixel</option>
+                <option value="Orbitron">Orbitron — futurista</option>
+                <option value="Cinzel">Cinzel — romana clássica</option>
+                <option value="Raleway">Raleway — minimalista</option>
+                <option value="Oswald">Oswald — condensada forte</option>
+                <option value="Playfair Display">Playfair Display — editorial</option>
+                <option value="Dancing Script">Dancing Script — manuscrita</option>
+                <option value="Abril Fatface">Abril Fatface — display bold</option>
+                <option value="Permanent Marker">Permanent Marker — marcador</option>
+                <option value="Russo One">Russo One — industrial</option>
+                </optgroup>
+            </select>
+            <!-- Preview da fonte -->
+            <div id="fonte-preview" style="width:100%;padding:5px 8px;background:#1a1a1a;border-radius:5px;color:white;font-size:16px;text-align:center;min-height:28px;">Abc 123</div>
+            <!-- Fonte personalizada -->
+            <div style="display:flex;gap:5px;align-items:center;width:100%;">
+                <input id="fonte-custom" placeholder="Nome da fonte instalada..." style="flex:1;background:#2a2a2a;border:1px solid #444;border-radius:7px;padding:5px 8px;color:white;font-size:10px;outline:none;">
+                <div id="btn-fonte-custom" style="padding:5px 8px;background:#333;border-radius:7px;font-size:10px;color:#03dac6;cursor:pointer;white-space:nowrap;">Usar</div>
+            </div>
+        </div>
+        <div class="texto-ctrl">
+            <label>TAM:</label>
+            <input type="range" id="texto-tamanho" min="8" max="200" value="32">
+            <span id="texto-tam-val" style="font-size:11px;color:#03dac6;min-width:30px;">32</span>
+        </div>
+        <div class="texto-ctrl">
+            <label>COR:</label>
+            <input type="color" id="texto-cor" value="#000000" style="width:30px;height:30px;border-radius:50%;border:2px solid #555;">
+            <div style="display:flex;gap:5px;margin-left:6px;">
+                <div id="txt-bold" style="padding:3px 7px;background:#2a2a2a;border:1px solid #333;border-radius:5px;font-size:11px;font-weight:bold;cursor:pointer;color:#aaa;">B</div>
+                <div id="txt-italic" style="padding:3px 7px;background:#2a2a2a;border:1px solid #333;border-radius:5px;font-size:11px;font-style:italic;cursor:pointer;color:#aaa;">I</div>
+            </div>
+        </div>
+        <!-- Opção de degradê -->
+        <div style="background:#222;border-radius:8px;padding:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <span style="font-size:11px;color:#ccc;font-weight:bold;">🎨 Degradê</span>
+                <label class="toggle-wrap">
+                    <input type="checkbox" id="txt-degrade-ativo">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div id="txt-degrade-wrap" style="display:none;flex-direction:column;gap:6px;">
+                <div style="display:flex;gap:8px;align-items:center;justify-content:center;">
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+                        <span style="font-size:9px;color:#888;">COR A</span>
+                        <input type="color" id="txt-deg-cor1" value="#ff00ff" style="width:34px;height:34px;border-radius:50%;border:2px solid #555;">
+                    </div>
+                    <span style="color:#555;font-size:14px;">→</span>
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+                        <span style="font-size:9px;color:#888;">COR B</span>
+                        <input type="color" id="txt-deg-cor2" value="#00cfff" style="width:34px;height:34px;border-radius:50%;border:2px solid #555;">
+                    </div>
+                </div>
+                <div style="display:flex;gap:5px;">
+                    <div id="txt-deg-linear" style="flex:1;padding:5px;border-radius:7px;border:2px solid #03dac6;background:#1e2e2e;color:#03dac6;font-size:9px;font-weight:bold;text-align:center;">▬ LINEAR</div>
+                    <div id="txt-deg-radial" style="flex:1;padding:5px;border-radius:7px;border:1px solid #333;background:#2a2a2a;color:#888;font-size:9px;font-weight:bold;text-align:center;">◎ RADIAL</div>
+                </div>
+            </div>
+        </div>
+        <!-- Opção de contorno -->
+        <div style="background:#222;border-radius:8px;padding:8px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <span style="font-size:11px;color:#ccc;font-weight:bold;">✏️ Contorno</span>
+                <label class="toggle-wrap">
+                    <input type="checkbox" id="txt-contorno-ativo">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div id="txt-contorno-wrap" style="display:none;flex-direction:column;gap:6px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:10px;color:#888;min-width:28px;">COR</span>
+                    <input type="color" id="txt-contorno-cor" value="#000000" style="width:30px;height:30px;border-radius:50%;border:2px solid #555;">
+                    <span style="font-size:10px;color:#888;margin-left:4px;">ESP</span>
+                    <input type="range" id="txt-contorno-esp" min="0.5" max="20" step="0.5" value="2" style="flex:1;accent-color:#03dac6;">
+                    <span id="txt-contorno-esp-val" style="font-size:11px;color:#03dac6;min-width:26px;">2px</span>
+                </div>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button id="btn-inserir-texto" style="flex:1;padding:10px;border-radius:9px;border:none;background:linear-gradient(135deg,#03dac6,#00a896);color:#000;font-weight:800;font-size:12px;">✓ INSERIR</button>
+            <button id="btn-cancelar-texto" style="padding:10px 14px;border-radius:9px;border:none;background:#333;color:#aaa;font-size:12px;">✕</button>
+        </div>
+    </div>
+</div>
+
+<!-- PAINEL HISTÓRICO -->
+<div id="painel-historico">
+    <div style="padding:8px 10px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:bold;color:#03dac6;font-size:12px;">⏱ HISTÓRICO</span>
+        <button onclick="toggleHistorico()" style="background:#555;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:12px;">✕</button>
+    </div>
+    <div id="hist-lista"></div>
+</div>
+
+<canvas id="hidden-canvas" style="display:none"></canvas>
+<canvas id="thumb-canvas" width="36" height="45" style="display:none"></canvas>
+
+<!-- ══ LOADER GLOBAL ══ -->
+<div id="tm-loader">
+    <div class="tm-loader-spinner"></div>
+    <div class="tm-loader-msg" id="tm-loader-msg">Processando...</div>
+    <div class="tm-loader-bar-wrap">
+        <div class="tm-loader-bar" id="tm-loader-bar"></div>
+    </div>
+</div>
+
+<!-- ══ SUGESTÃO INTELIGENTE ══ -->
+<div id="tm-sugestao">
+    <div class="tm-sug-titulo" id="tm-sug-titulo">💡 Sugestão</div>
+    <div class="tm-sug-texto" id="tm-sug-texto"></div>
+    <div class="tm-sug-btns">
+        <button class="tm-sug-sim" id="tm-sug-sim">✓ Aplicar</button>
+        <button class="tm-sug-nao" id="tm-sug-nao">✕ Ignorar</button>
+    </div>
+</div>
+
+<!-- OVERLAY FECHA POPUPS -->
+<div id="popup-overlay"></div>
+
+<!-- POPUP: DESENHO -->
+<div id="popup-desenho" class="popup-menu">
+    <div class="popup-titulo">✏️ Desenho <button onclick="fecharTodosPopups()">✕</button></div>
+    <div class="popup-grid">
+        <div class="popup-item" id="pitem-pen" ontouchstart="selecionarFerramenta('pen');fecharTodosPopups()">🖊<span>PEN</span></div>
+        <div class="popup-item" id="pitem-livre" ontouchstart="selecionarFerramenta('livre');fecharTodosPopups()">✏️<span>LIVRE</span></div>
+        <div class="popup-item" id="pitem-borracha" ontouchstart="selecionarFerramenta('borracha');fecharTodosPopups()">🧹<span>BORR</span></div>
+        <div class="popup-item" id="pitem-formas" ontouchstart="toggleFormas();fecharTodosPopups()">⬡<span>FORMA</span></div>
+        <div class="popup-item" id="pitem-selecao" ontouchstart="toggleSelecao();fecharTodosPopups()">⊹<span>SELEC</span></div>
+        <div class="popup-item" id="pitem-texto" ontouchstart="ativarModoTexto();fecharTodosPopups()">T<span>TEXTO</span></div>
+        <div class="popup-item" id="pitem-degrade" ontouchstart="abrirModalDegrade();fecharTodosPopups()" style="font-size:16px;">🎨<span>DEGRADÊ</span></div>
+        <div class="popup-item" id="pitem-editar" ontouchstart="toggleEditarMode();fecharTodosPopups()">✎<span>EDITAR</span></div>
+        <div class="popup-item" id="pitem-fechar" ontouchstart="fecharCaminho();fecharTodosPopups()" style="display:none;">⬡<span>FECHAR</span></div>
+    </div>
+    <div class="popup-slider-row">
+        <label>TAM</label>
+        <input type="range" id="brush-size" min="1" max="100" value="5" oninput="document.getElementById('v-tam').textContent=this.value">
+        <span class="val" id="v-tam">5</span>
+    </div>
+    <div class="popup-slider-row">
+        <label>OPAC</label>
+        <input type="range" id="brush-opacity" min="0.1" max="1" step="0.1" value="1" oninput="document.getElementById('v-opac').textContent=Math.round(this.value*100)+'%'">
+        <span class="val" id="v-opac">100%</span>
+    </div>
+    <div class="popup-slider-row">
+        <label>COR</label>
+        <input type="color" id="col-main" value="#000000" style="width:36px;height:36px;border-radius:50%;border:2px solid #555;cursor:pointer;padding:0;">
+        <select id="pincel-tipo" style="flex:1;background:#2a2a2a;color:white;border:1px solid #444;border-radius:7px;padding:4px 6px;font-size:11px;">
+            <option value="fino">Normal</option>
+            <option value="neon">Neon</option>
+            <option value="tracejado">Tracejado</option>
+        </select>
+    </div>
+</div>
+
+<!-- POPUP: PINCÉIS -->
+<div id="popup-pinceis-wrap" class="popup-menu" style="bottom:74px;">
+    <div class="popup-titulo">🖌 Pincéis <button onclick="fecharTodosPopups()">✕</button></div>
+    <div style="display:flex;gap:4px;margin-bottom:8px;">
+        <button id="aba-basico"    ontouchstart="trocarAba('basico')"    class="aba-pincel ativa" style="flex:1">Básico</button>
+        <button id="aba-artistico" ontouchstart="trocarAba('artistico')" class="aba-pincel" style="flex:1">Artístico</button>
+        <button id="aba-especial"  ontouchstart="trocarAba('especial')"  class="aba-pincel" style="flex:1">Especial</button>
+        <button id="aba-textura"   ontouchstart="trocarAba('textura')"   class="aba-pincel" style="flex:1">Textura</button>
+    </div>
+    <div id="menu-pinceis" style="display:flex;position:static;border:none;padding:0;width:auto;background:transparent;">
+        <!-- Grupo Básico -->
+        <div id="grupo-basico" class="pincel-grupo">
+            <div class="pincel-btn ativo" id="pb-normal"     ontouchstart="selecionarPincel('normal',this)">
+                <canvas class="pincel-preview" id="prev-normal"></canvas>
+                <div><div class="pincel-nome">Normal</div><div class="pincel-desc">Traço limpo e uniforme</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-marcador"  ontouchstart="selecionarPincel('marcador',this)">
+                <canvas class="pincel-preview" id="prev-marcador"></canvas>
+                <div><div class="pincel-nome">Marcador</div><div class="pincel-desc">Flat, sem transparência</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-tracejado" ontouchstart="selecionarPincel('tracejado',this)">
+                <canvas class="pincel-preview" id="prev-tracejado"></canvas>
+                <div><div class="pincel-nome">Tracejado</div><div class="pincel-desc">Linha pontilhada</div></div>
+            </div>
+        </div>
+        <!-- Grupo Artístico -->
+        <div id="grupo-artistico" class="pincel-grupo" style="display:none;">
+            <div class="pincel-btn" id="pb-caligrafia"  ontouchstart="selecionarPincel('caligrafia',this)">
+                <canvas class="pincel-preview" id="prev-caligrafia"></canvas>
+                <div><div class="pincel-nome">Caligrafia</div><div class="pincel-desc">Grosso/fino pela direção</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-aquarela"    ontouchstart="selecionarPincel('aquarela',this)">
+                <canvas class="pincel-preview" id="prev-aquarela"></canvas>
+                <div><div class="pincel-nome">Aquarela</div><div class="pincel-desc">Transparência suave</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-carvao"      ontouchstart="selecionarPincel('carvao',this)">
+                <canvas class="pincel-preview" id="prev-carvao"></canvas>
+                <div><div class="pincel-nome">Carvão</div><div class="pincel-desc">Textura granulada</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-giz"         ontouchstart="selecionarPincel('giz',this)">
+                <canvas class="pincel-preview" id="prev-giz"></canvas>
+                <div><div class="pincel-nome">Giz</div><div class="pincel-desc">Suave e esfumado</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-oleo"        ontouchstart="selecionarPincel('oleo',this)">
+                <canvas class="pincel-preview" id="prev-oleo"></canvas>
+                <div><div class="pincel-nome">Óleo</div><div class="pincel-desc">Denso com textura</div></div>
+            </div>
+        </div>
+        <!-- Grupo Especial -->
+        <div id="grupo-especial" class="pincel-grupo" style="display:none;">
+            <div class="pincel-btn" id="pb-neon"    ontouchstart="selecionarPincel('neon',this)">
+                <canvas class="pincel-preview" id="prev-neon"></canvas>
+                <div><div class="pincel-nome">Neon</div><div class="pincel-desc">Brilho luminoso</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-spray"   ontouchstart="selecionarPincel('spray',this)">
+                <canvas class="pincel-preview" id="prev-spray"></canvas>
+                <div><div class="pincel-nome">Spray</div><div class="pincel-desc">Pontos espalhados</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-pelo"    ontouchstart="selecionarPincel('pelo',this)">
+                <canvas class="pincel-preview" id="prev-pelo"></canvas>
+                <div><div class="pincel-nome">Pelo/Cabelo</div><div class="pincel-desc">Linhas múltiplas</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-estrela" ontouchstart="selecionarPincel('estrela',this)">
+                <canvas class="pincel-preview" id="prev-estrela"></canvas>
+                <div><div class="pincel-nome">Estrela</div><div class="pincel-desc">Faíscas e brilhos</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-lasso"   ontouchstart="selecionarPincel('lasso',this)">
+                <canvas class="pincel-preview" id="prev-lasso"></canvas>
+                <div><div class="pincel-nome">Lasso</div><div class="pincel-desc">Contorno suave</div></div>
+            </div>
+        </div>
+        <!-- Grupo Textura -->
+        <div id="grupo-textura" class="pincel-grupo" style="display:none;">
+            <div class="pincel-btn" id="pb-pontilhismo" ontouchstart="selecionarPincel('pontilhismo',this)">
+                <canvas class="pincel-preview" id="prev-pontilhismo"></canvas>
+                <div><div class="pincel-nome">Pontilhismo</div><div class="pincel-desc">Pontos circulares</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-risco"       ontouchstart="selecionarPincel('risco',this)">
+                <canvas class="pincel-preview" id="prev-risco"></canvas>
+                <div><div class="pincel-nome">Risco</div><div class="pincel-desc">Hachura irregular</div></div>
+            </div>
+            <div class="pincel-btn" id="pb-duplo"       ontouchstart="selecionarPincel('duplo',this)">
+                <canvas class="pincel-preview" id="prev-duplo"></canvas>
+                <div><div class="pincel-nome">Duplo</div><div class="pincel-desc">Duas linhas paralelas</div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- POPUP: VISTA -->
+<div id="popup-vista" class="popup-menu">
+    <div class="popup-titulo">👁 Vista <button onclick="fecharTodosPopups()">✕</button></div>
+    <div class="popup-grid">
+        <div class="popup-item" ontouchstart="resetView();fecharTodosPopups()">⟳<span>RESET</span></div>
+        <div class="popup-item" id="pitem-mover" ontouchstart="toggleMover();fecharTodosPopups()">🔓<span>MOVER</span></div>
+        <div class="popup-item" id="pitem-espelho" ontouchstart="toggleEspelho();fecharTodosPopups()">⟺<span>ESPELHO</span></div>
+        <div class="popup-item" id="pitem-regua" ontouchstart="toggleRegua();fecharTodosPopups()">📐<span>RÉGUA</span></div>
+        <div class="popup-item" id="pitem-outline" ontouchstart="toggleOutline();fecharTodosPopups()">◻<span>OUTLINE</span></div>
+        <div class="popup-item" id="pitem-snap" ontouchstart="toggleSnap();fecharTodosPopups()">🧲<span>SNAP</span></div>
+        <div class="popup-item" id="pitem-conta-gotas" ontouchstart="toggleContaGotas();fecharTodosPopups()">💧<span>COR</span></div>
+        <div class="popup-item" id="pitem-historico" ontouchstart="toggleHistorico();fecharTodosPopups()">⏱<span>HISTOR</span></div>
+    </div>
+</div>
+
+<!-- POPUP: PROJETO -->
+<!-- BOTÃO CAMADAS FLUTUANTE — fixo no canto superior direito -->
+<div id="btn-camadas-flutuante" ontouchstart="event.stopPropagation();togglePainel();fecharTodosPopups()" style="
+    position:fixed; top:58px; right:10px; z-index:30;
+    width:44px; height:44px; border-radius:12px;
+    background:#1a1a1a; border:2px solid #03dac6;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:1px; cursor:pointer; touch-action:manipulation;
+    box-shadow:0 2px 10px rgba(3,218,198,0.3);
+">
+    <span style="font-size:16px; color:#03dac6;">☰</span>
+    <span style="font-size:7px; font-weight:bold; color:#03dac6; letter-spacing:0.3px;">CAMADAS</span>
+</div>
+
+<div id="popup-projeto" class="popup-menu">
+    <div class="popup-titulo">📁 Projeto <button onclick="fecharTodosPopups()">✕</button></div>
+    <div class="popup-grid-3">
+        <div class="popup-item" ontouchstart="event.stopPropagation();fecharTodosPopups();setTimeout(abrirModalSalvar,50)">💾<span>SALVAR</span></div>
+        <div class="popup-item" ontouchstart="abrirPerfil();fecharTodosPopups()">👤<span>PERFIL</span></div>
+        <div class="popup-item" ontouchstart="event.stopPropagation();fecharTodosPopups();setTimeout(function(){document.getElementById('f').click();},80)">📷<span>FOTO</span></div>
+    </div>
+</div>
+
+<!-- BARRA PRINCIPAL -->
+<div class="bar">
+    <input type="file" id="f" accept="image/*"
+           style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;">
+
+    <!-- Ferramenta ativa -->
+    <div class="bar-btn" id="btnFerramentas" ontouchstart="togglePopup('popup-desenho')">
+        <span id="ferr-icon">🖊</span>
+        <span class="bar-label" id="ferr-label">DRAW</span>
+    </div>
+
+    <!-- Pincéis -->
+    <div class="bar-btn" id="btnPinceis" ontouchstart="togglePopup('popup-pinceis-wrap')">
+        🖌<span class="bar-label">PINCEL</span>
+    </div>
+
+    <!-- Cor rápida -->
+    <div class="bar-btn" style="padding:4px;" ontouchstart="document.getElementById('col-main').click()">
+        <div id="cor-preview-bar" style="width:24px;height:24px;border-radius:50%;background:#000;border:2px solid #555;"></div>
+        <span class="bar-label">COR</span>
+    </div>
+
+    <!-- Foto — abre seletor de imagem para vetorizar -->
+    <div class="bar-btn" ontouchstart="event.stopPropagation();fecharTodosPopups();setTimeout(function(){document.getElementById('f').click();},80)">
+        📷<span class="bar-label">FOTO</span>
+    </div>
+
+    <!-- Salvar -->
+    <div class="bar-btn" ontouchstart="event.stopPropagation();fecharTodosPopups();setTimeout(abrirModalSalvar,80)">
+        💾<span class="bar-label">SALVAR</span>
+    </div>
+
+    <!-- Desfazer -->
+    <div class="bar-btn" ontouchstart="desfazerPen()">
+        ↩<span class="bar-label">DESFAZ</span>
+    </div>
+
+    <!-- Refazer — ao lado do desfazer -->
+    <div class="bar-btn" ontouchstart="refazerPen()">
+        ↪<span class="bar-label">REFAZ</span>
+    </div>
+
+    <!-- Mais opções / Projeto -->
+    <div class="bar-btn" ontouchstart="togglePopup('popup-projeto')">
+        ⋯<span class="bar-label">MAIS</span>
+    </div>
+</div>
+
+<!-- botões antigos (ocultos) para manter compatibilidade com JS existente -->
+<div style="display:none">
+    <button id="btnMover"></button>
+    <button id="btnDegrade"></button>
+    <button id="btnEditar"></button>
+    <button id="btnFormas"></button>
+    <button id="btnSelecao"></button>
+    <button id="btnTexto"></button>
+    <button id="btnRegua"></button>
+    <button id="btnContaGotas"></button>
+    <button id="btnEspelho"></button>
+    <button id="btnHistorico"></button>
+    <button id="btnFechar"></button>
+    <button id="btnOutline"></button>
+    <button id="btnSnap"></button>
+    <button id="btnCamadas"></button>
+    <button id="btn-perfil-editor"><img id="avatar-editor" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='40' r='22' fill='%23888'/%3E%3Ccircle cx='50' cy='90' r='35' fill='%23888'/%3E%3C/svg%3E" style="width:100%;height:100%;object-fit:cover;"></button>
+</div>
+
+<svg style="display:none"><defs><filter id="neon-glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs></svg>
+
+<div id="lupa"><canvas id="lupa-canvas" width="90" height="90"></canvas></div>
+
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body></html>
