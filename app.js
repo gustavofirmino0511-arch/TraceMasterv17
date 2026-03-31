@@ -4157,12 +4157,12 @@ window.addEventListener('load', () => {
                 let contraste, brilho, blur, pathomit;
 
                 if (analise.tipo === 'lineart') {
-                    contraste = 250; brilho = 110; blur = 0; pathomit = 8;
+                    contraste = 250; brilho = 110; blur = 0; pathomit = 5;
                 } else if (analise.tipo === 'desenho') {
-                    contraste = 180; brilho = 100; blur = 1; pathomit = 12;
+                    contraste = 185; brilho = 102; blur = 0.5; pathomit = 8;
                 } else {
                     // foto: reforça contraste para separar silhueta do fundo
-                    contraste = 200; brilho = 95; blur = 1.5; pathomit = 20;
+                    contraste = 200; brilho = 95; blur = 1.2; pathomit = 12;
                 }
 
                 // Aplica valores nos sliders
@@ -4617,7 +4617,7 @@ window.addEventListener('load', () => {
 
     function detectarCorContorno(img, analise) {
         if (!img || !analise) return null;
-        if (analise.tipo === 'foto' && analise.bordas < 0.10) return null;
+        if (analise.tipo === 'foto' && analise.bordas < 0.06 && analise.contraste < 0.12) return null;
 
         const size = 96;
         const c = document.createElement('canvas');
@@ -4658,7 +4658,7 @@ window.addEventListener('load', () => {
         if (!analise || !corContorno) return false;
         if (analise.tipo === 'lineart') return true;
         if (analise.tipo === 'desenho') return analise.bordas > 0.04 || analise.contraste > 0.15;
-        return analise.bordas > 0.13 && analise.contraste > 0.16;
+        return analise.bordas > 0.09 && analise.contraste > 0.12;
     }
 
     function escolherCorContorno(fillHex, corContornoBase) {
@@ -4756,6 +4756,110 @@ window.addEventListener('load', () => {
             }
         });
         return melhorCor;
+    }
+
+
+    function gerarGrupoContornoEscuro(img, corTraco, larguraTraco = 1.2, sensibilidade = obterSensibilidadeVetorizacao(), analise = null) {
+        if (!img || !window.ImageTracer) return null;
+
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        const imgData = ctx.getImageData(0, 0, c.width, c.height);
+        const data = imgData.data;
+        const total = c.width * c.height;
+        const mask = new Uint8Array(total);
+        const precisao = clampNum((sensibilidade - 10) / 140, 0, 1);
+        const lumBase = analise?.tipo === 'lineart' ? 210 : analise?.tipo === 'desenho' ? 145 : 128;
+        const satBase = analise?.tipo === 'lineart' ? 1 : 0.58;
+
+        for (let i = 0, px = 0; i < data.length; i += 4, px++) {
+            if (data[i + 3] < 120) continue;
+            const rgb = { r: data[i], g: data[i + 1], b: data[i + 2] };
+            if (window._corFundo && corDistRgb(rgb, window._corFundo) < 34) continue;
+            const lum = luminanciaRgb(rgb);
+            const max = Math.max(rgb.r, rgb.g, rgb.b);
+            const min = Math.min(rgb.r, rgb.g, rgb.b);
+            const sat = max === 0 ? 0 : (max - min) / max;
+            const escuro = lum < lumBase || (lum < lumBase + 14 && sat < satBase);
+            if (escuro) mask[px] = 1;
+        }
+
+        const expandido = new Uint8Array(total);
+        for (let y = 0; y < c.height; y++) {
+            for (let x = 0; x < c.width; x++) {
+                const idx = y * c.width + x;
+                if (!mask[idx]) continue;
+                for (let oy = -1; oy <= 1; oy++) {
+                    for (let ox = -1; ox <= 1; ox++) {
+                        const nx = x + ox;
+                        const ny = y + oy;
+                        if (nx < 0 || ny < 0 || nx >= c.width || ny >= c.height) continue;
+                        expandido[ny * c.width + nx] = 1;
+                    }
+                }
+            }
+        }
+
+        for (let px = 0, i = 0; px < total; px++, i += 4) {
+            if (expandido[px]) {
+                data[i] = 0;
+                data[i + 1] = 0;
+                data[i + 2] = 0;
+                data[i + 3] = 255;
+            } else {
+                data[i + 3] = 0;
+            }
+        }
+
+        const svgString = ImageTracer.imagedataToSVG(imgData, {
+            colorsampling: 0,
+            numberofcolors: 2,
+            colorquantcycles: 1,
+            pal: [{ r: 0, g: 0, b: 0, a: 255 }, { r: 255, g: 255, b: 255, a: 0 }],
+            ltres: clampNum(0.72 - precisao * 0.34, 0.30, 0.72),
+            qtres: clampNum(0.70 - precisao * 0.36, 0.28, 0.70),
+            pathomit: Math.round(clampNum(9 - precisao * 5, 3, 9)),
+            blurradius: 0,
+            mincolorratio: 0,
+            linefilter: true,
+            strokewidth: 0,
+            viewbox: true,
+            scale: 1,
+        });
+
+        const parser = new DOMParser();
+        const svgDoc = parser.parseFromString(svgString, 'image/svg+xml');
+        const paths = Array.from(svgDoc.querySelectorAll('path'));
+        if (!paths.length) return null;
+
+        const ns = 'http://www.w3.org/2000/svg';
+        const g = document.createElementNS(ns, 'g');
+        g.setAttribute('data-tm-auto-outline', '1');
+        g.setAttribute('fill', 'none');
+        g.setAttribute('stroke', corTraco);
+        g.setAttribute('stroke-width', larguraTraco);
+        g.setAttribute('stroke-linecap', 'round');
+        g.setAttribute('stroke-linejoin', 'round');
+        g.setAttribute('paint-order', 'stroke');
+
+        paths.forEach(path => {
+            const d = path.getAttribute('d');
+            if (!d) return;
+            const p = document.createElementNS(ns, 'path');
+            p.setAttribute('d', d);
+            p.setAttribute('fill', 'none');
+            p.setAttribute('stroke', corTraco);
+            p.setAttribute('stroke-width', larguraTraco);
+            p.setAttribute('stroke-linecap', 'round');
+            p.setAttribute('stroke-linejoin', 'round');
+            p.setAttribute('paint-order', 'stroke');
+            g.appendChild(p);
+        });
+
+        return g.childNodes.length ? g : null;
     }
 
     // Vetorização com OpenCV — detecção de bordas Canny
@@ -5098,17 +5202,26 @@ window.addEventListener('load', () => {
                         ) || corPreenchimento || coresUsuarioFinal[0];
                     }
 
-                    const corStroke = aplicarContorno
-                        ? escolherCorContorno(corPreenchimento, corContornoBase)
-                        : corPreenchimento;
+                    const corStroke = corPreenchimento;
                     const larguraStroke = aplicarContorno
-                        ? Math.max(0.9, larguraTraco * Math.max(cfgSens.contourWidth, 0.62))
+                        ? Math.max(0.22, larguraTraco * 0.08)
                         : Math.max(0.35, larguraTraco * 0.18);
 
                     path.setAttribute('fill', corPreenchimento);
                     path.setAttribute('stroke', corStroke);
                     path.setAttribute('stroke-width', larguraStroke);
                 });
+
+                if (aplicarContorno && svgRoot) {
+                    const outlineGroup = gerarGrupoContornoEscuro(
+                        window.imgParaVetor,
+                        corContornoBase || '#111111',
+                        Math.max(0.9, larguraTraco * Math.max(cfgSens.contourWidth, 0.62)),
+                        sensibilidade,
+                        analiseAtual
+                    );
+                    if (outlineGroup) svgRoot.appendChild(svgDoc.importNode(outlineGroup, true));
+                }
 
                 const svgFinal = new XMLSerializer().serializeToString(svgDoc);
                 svgArea.innerHTML = svgFinal;
