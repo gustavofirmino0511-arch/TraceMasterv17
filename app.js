@@ -4871,20 +4871,27 @@ window.addEventListener('load', () => {
                 document.body.removeChild(tmpSvg);
 
                 // PASSO 4: Segunda passagem — contorno preto por cima das cores
-                // Extrai apenas os pixels escuros da imagem original (outlines do estilo cartoon)
-                // e traça como camada separada on top, restaurando os contornos pretos.
+                // Lê da imagem ORIGINAL (antes do processamento de contraste/brilho)
+                // para não confundir pixels escurecidos pelo filtro com contornos reais.
                 const _escuros = (() => {
-                    const orig = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
-                    const out  = new ImageData(hCanvas.width, hCanvas.height);
+                    const imgOrig = window.imgParaVetor;
+                    if (!imgOrig) return null;
+                    const tc = document.createElement('canvas');
+                    tc.width = hCanvas.width; tc.height = hCanvas.height;
+                    const tctx = tc.getContext('2d');
+                    tctx.drawImage(imgOrig, 0, 0, tc.width, tc.height);
+                    const orig = tctx.getImageData(0, 0, tc.width, tc.height);
+                    const out  = new ImageData(tc.width, tc.height);
                     const d = orig.data, od = out.data;
                     let count = 0;
                     for (let i = 0; i < d.length; i += 4) {
-                        if (d[i] < 70 && d[i+1] < 70 && d[i+2] < 70 && d[i+3] > 100) {
+                        // Limiar 45: captura contornos pretos originais, ignora sombras médias
+                        if (d[i] < 45 && d[i+1] < 45 && d[i+2] < 45 && d[i+3] > 100) {
                             od[i]=0; od[i+1]=0; od[i+2]=0; od[i+3]=255;
                             count++;
                         }
                     }
-                    return count > (hCanvas.width * hCanvas.height * 0.01) ? out : null;
+                    return count > (tc.width * tc.height * 0.01) ? out : null;
                 })();
 
                 let svgFinal = new XMLSerializer().serializeToString(svgDoc);
