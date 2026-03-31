@@ -6328,9 +6328,9 @@ window.addEventListener('load', () => {
                         console.warn('OpenCV adaptiveThreshold falhou, usando canvas:', cvErr);
                     }
                 }
-                // limparFundo: flood-fill inteligente — remove APENAS pixels de fundo
-                // CONECTADOS à borda da imagem. Áreas claras/brancas INTERNAS do
-                // desenho (reflexos, brilhos, destaques) são preservadas.
+                // limparFundo: flood-fill inteligente — remove APENAS pixels BRANCOS
+                // CONECTADOS à borda da imagem. Áreas claras internas do desenho
+                // (reflexos, brilhos, destaques) são preservadas.
                 {
                     const _fd = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
                     const _pd = _fd.data;
@@ -6340,41 +6340,27 @@ window.addEventListener('load', () => {
                     const _visited = new Uint8Array(_total);
                     const _remover = new Uint8Array(_total);
 
-                    // Cor de fundo detectada nas bordas (pode ser null se branco/preto puro)
-                    const _corFundoDet = window._corFundo;
-                    const _LIMIAR_BRANCO = 240;
-                    const _LIMIAR_COR = 50; // distância euclidiana RGB
+                    // Limiar alto (250) para não vazar por bordas anti-aliased
+                    // após filtro de contraste. Só branco quase puro é considerado fundo.
+                    const _LIMIAR = 250;
 
-                    // Verifica se pixel é cor de fundo (branco OU cor detectada)
-                    const _ehFundo = (idx) => {
+                    const _ehBranco = (idx) => {
                         const i = idx * 4;
-                        if (_pd[i + 3] === 0) return false; // já transparente
-                        const r = _pd[i], g = _pd[i + 1], b = _pd[i + 2];
-                        // Branco / quase-branco
-                        if (r > _LIMIAR_BRANCO && g > _LIMIAR_BRANCO && b > _LIMIAR_BRANCO) return true;
-                        // Cor de fundo detectada
-                        if (_corFundoDet) {
-                            const dist = Math.sqrt(
-                                (r - _corFundoDet.r) ** 2 +
-                                (g - _corFundoDet.g) ** 2 +
-                                (b - _corFundoDet.b) ** 2
-                            );
-                            if (dist < _LIMIAR_COR) return true;
-                        }
-                        return false;
+                        if (_pd[i + 3] === 0) return false;
+                        return _pd[i] > _LIMIAR && _pd[i + 1] > _LIMIAR && _pd[i + 2] > _LIMIAR;
                     };
 
-                    // Semeia flood-fill com todos os pixels das 4 bordas
+                    // Semeia flood-fill com pixels brancos das 4 bordas
                     const _fila = [];
                     for (let x = 0; x < _w; x++) {
                         const t = x, bt = (_h - 1) * _w + x;
-                        if (_ehFundo(t))  { _visited[t]  = 1; _remover[t]  = 1; _fila.push(t);  }
-                        if (_ehFundo(bt)) { _visited[bt] = 1; _remover[bt] = 1; _fila.push(bt); }
+                        if (_ehBranco(t))  { _visited[t]  = 1; _remover[t]  = 1; _fila.push(t);  }
+                        if (_ehBranco(bt)) { _visited[bt] = 1; _remover[bt] = 1; _fila.push(bt); }
                     }
                     for (let y = 1; y < _h - 1; y++) {
                         const l = y * _w, r = y * _w + _w - 1;
-                        if (!_visited[l] && _ehFundo(l)) { _visited[l] = 1; _remover[l] = 1; _fila.push(l); }
-                        if (!_visited[r] && _ehFundo(r)) { _visited[r] = 1; _remover[r] = 1; _fila.push(r); }
+                        if (!_visited[l] && _ehBranco(l)) { _visited[l] = 1; _remover[l] = 1; _fila.push(l); }
+                        if (!_visited[r] && _ehBranco(r)) { _visited[r] = 1; _remover[r] = 1; _fila.push(r); }
                     }
 
                     // BFS com índice de leitura (O(1) por dequeue, sem shift())
@@ -6383,17 +6369,28 @@ window.addEventListener('load', () => {
                         const idx = _fila[_qi++];
                         const x = idx % _w;
                         const y = (idx / _w) | 0;
-                        if (x > 0)      { const n = idx - 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (x < _w - 1) { const n = idx + 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (y > 0)      { const n = idx - _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (y < _h - 1) { const n = idx + _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (x > 0)      { const n = idx - 1;   if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (x < _w - 1) { const n = idx + 1;   if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (y > 0)      { const n = idx - _w;  if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                        if (y < _h - 1) { const n = idx + _w;  if (!_visited[n] && _ehBranco(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
                     }
 
-                    // Torna transparente APENAS os pixels de fundo conectados à borda
-                    for (let i = 0; i < _total; i++) {
-                        if (_remover[i]) _pd[i * 4 + 3] = 0;
+                    // Segurança: se removeu >85% dos pixels opacos, flood-fill vazou
+                    // Nesse caso reverte e usa método conservador (nada removido aqui,
+                    // o pós-processamento SVG cuida do fundo)
+                    let _nOpacos = 0;
+                    for (let i = 0; i < _total; i++) if (_pd[i * 4 + 3] > 0) _nOpacos++;
+                    const _removidos = _fila.length;
+                    const _proporcao = _nOpacos > 0 ? _removidos / _nOpacos : 0;
+
+                    if (_proporcao < 0.85) {
+                        // Flood-fill OK — aplica transparência
+                        for (let i = 0; i < _total; i++) {
+                            if (_remover[i]) _pd[i * 4 + 3] = 0;
+                        }
+                        hCtx.putImageData(_fd, 0, 0);
                     }
-                    hCtx.putImageData(_fd, 0, 0);
+                    // Se >85%, pula — o pós-processamento SVG remove o fundo
                 }
                 imgData = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
                 const pathomit = parseInt(document.getElementById('pre-pathomit')?.value || 16);
