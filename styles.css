@@ -1,6 +1,13 @@
-    body { margin: 0; background: #121212; color: white; font-family: sans-serif; overflow: hidden; }
-    #ui-top { position: fixed; top: 0; width: 100%; padding: 10px; background: rgba(0,0,0,0.8); z-index: 10; text-align: center; border-bottom: 1px solid #333; }
-    #viewport { width: 100vw; height: 100vh; overflow: hidden; position: relative; touch-action: none; }
+    :root { --tm-vh: 100vh; }
+    body { margin: 0; background: #121212; color: white; font-family: sans-serif; overflow: hidden; min-height: var(--tm-vh); }
+    #ui-top {
+        position: fixed; top: 0; width: 100%; padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px;
+        background: rgba(0,0,0,0.82); z-index: 10; text-align: center; border-bottom: 1px solid #333;
+        box-sizing: border-box;
+    }
+    #ui-top input[type=range] { width: min(38vw, 180px); }
+    #thresh-val { display: inline-block; min-width: 24px; margin-left: 6px; color: #03dac6; font-size: 11px; font-weight: bold; }
+    #viewport { width: 100vw; height: var(--tm-vh); overflow: hidden; position: relative; touch-action: none; }
     #work-surface { position: absolute; top: 0; left: 0; transform-origin: 0 0; background: white; width: 800px; height: 1000px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
     #svg-render-area, #draw-layer, #pen-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
     /* ── BARRA PRINCIPAL ──────────────────────────────────────────────── */
@@ -8,7 +15,7 @@
         position: fixed; bottom: 0; width: 100%;
         background: #1a1a1a;
         display: flex; align-items: center; justify-content: space-around;
-        padding: 8px 6px; border-top: 2px solid #03dac6;
+        padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px)); border-top: 2px solid #03dac6;
         z-index: 10; gap: 4px; box-sizing: border-box;
     }
     button { background: #333; color: white; border: none; padding: 8px 12px; border-radius: 5px; font-weight: bold; font-size: 11px; }
@@ -88,8 +95,15 @@
         background: transparent;
     }
     #popup-overlay.ativo { display: block; }
-    #modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; align-items: center; justify-content: center; z-index: 100; }
-    .modal-box { background: #222; padding: 20px; border-radius: 15px; text-align: center; border: 1px solid #03dac6; }
+    #modal {
+        position: fixed; top: 0; left: 0; width: 100%; height: var(--tm-vh); background: rgba(0,0,0,0.9);
+        display: none; align-items: center; justify-content: center; z-index: 100;
+        padding: calc(56px + env(safe-area-inset-top, 0px)) 10px calc(96px + env(safe-area-inset-bottom, 0px)); box-sizing: border-box;
+    }
+    .modal-box {
+        background: #222; padding: 20px; border-radius: 15px; text-align: center; border: 1px solid #03dac6;
+        max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    }
     .ctrl-group { display: flex; flex-direction: column; align-items: center; gap: 2px; }
     .ctrl-group label { font-size: 8px; color: #03dac6; }
     input[type=range] { width: 50px; accent-color: #03dac6; }
@@ -808,3 +822,31 @@
         background:#333; flex-shrink:0;
     }
     #btn-perfil-editor img { width:100%; height:100%; object-fit:cover; }
+
+    @media (max-width: 640px) {
+        #ui-top { font-size: 12px; }
+        .modal-box {
+            width: min(100%, 360px) !important;
+            padding: 16px;
+            border-radius: 14px;
+        }
+        #preview-canvas { max-height: 130px !important; }
+        .bar {
+            gap: 3px;
+            padding-left: 4px;
+            padding-right: 4px;
+        }
+        .bar-btn {
+            min-height: 48px;
+            padding: 5px 1px;
+            font-size: 14px;
+        }
+        .bar-btn span.bar-label {
+            font-size: 6px;
+            letter-spacing: 0.1px;
+        }
+        .popup-menu {
+            width: min(94vw, 360px);
+            bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+        }
+    }

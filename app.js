@@ -55,6 +55,30 @@ window.addEventListener('load', () => {
     let pinchAnguloIni = 0, pinchRotacaoIni = 0;
     let zoomAncoraCx = 0, zoomAncoraCy = 0, zoomAncoraScreenX = 0, zoomAncoraScreenY = 0;
 
+    function atualizarMetricasViewport() {
+        const viewportAltura = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        document.documentElement.style.setProperty('--tm-vh', `${viewportAltura}px`);
+    }
+
+    function tratarResizeViewport() {
+        atualizarMetricasViewport();
+        requestAnimationFrame(() => {
+            try { _clampPos(); } catch(_) {}
+            try { update(); } catch(_) {}
+            const overlay = document.getElementById('outline-overlay');
+            if (overlay && overlay.style.display === 'block') renderizarOutline();
+            esconderLupa();
+        });
+    }
+
+    atualizarMetricasViewport();
+    window.addEventListener('resize', tratarResizeViewport, { passive: true });
+    window.addEventListener('orientationchange', tratarResizeViewport, { passive: true });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', tratarResizeViewport, { passive: true });
+        window.visualViewport.addEventListener('scroll', tratarResizeViewport, { passive: true });
+    }
+
     // ── ESTADO GLOBAL CENTRALIZADO ────────────────────────────────────────────
     // Todas as variáveis de estado do app em um único objeto.
     // As variáveis individuais abaixo são aliases que apontam para appState,
@@ -3808,6 +3832,18 @@ window.addEventListener('load', () => {
         previewCtx.filter = 'none';
     };
 
+    function obterSensibilidadeVetorizacao() {
+        return parseFloat(document.getElementById('thresh')?.value || 50);
+    }
+
+    function atualizarLabelSensibilidade() {
+        const label = document.getElementById('thresh-val');
+        if (label) label.textContent = Math.round(obterSensibilidadeVetorizacao());
+    }
+
+    document.getElementById('thresh')?.addEventListener('input', atualizarLabelSensibilidade);
+    atualizarLabelSensibilidade();
+
     // ════════════════════════════════════════════════════════════
     // MÓDULO: INTELIGÊNCIA AUTOMÁTICA v1.0
     // ════════════════════════════════════════════════════════════
@@ -4091,6 +4127,7 @@ window.addEventListener('load', () => {
         setTimeout(() => {
             try {
                 const analise = analisarImagem(img);
+                window._analiseVetorAtual = analise;
                 esconderLoader();
 
                 // Atualiza tag de tipo visual no modal
@@ -4511,357 +4548,527 @@ window.addEventListener('load', () => {
         const label = document.querySelector('#modal .modal-box span');
     };
 
+    function clampNum(v, min, max) {
+        return Math.min(max, Math.max(min, v));
+    }
+
+    function hexToRgb(hex) {
+        const safe = (hex || '#000000').trim();
+        if (!safe.startsWith('#') || safe.length !== 7) return { r: 0, g: 0, b: 0, a: 255 };
+        return {
+            r: parseInt(safe.slice(1, 3), 16),
+            g: parseInt(safe.slice(3, 5), 16),
+            b: parseInt(safe.slice(5, 7), 16),
+            a: 255,
+        };
+    }
+
+    function rgbToHex(rgb) {
+        return '#' + [rgb.r, rgb.g, rgb.b]
+            .map(v => clampNum(Math.round(v), 0, 255).toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    function corDistRgb(c1, c2) {
+        return Math.sqrt((c1.r - c2.r) ** 2 + (c1.g - c2.g) ** 2 + (c1.b - c2.b) ** 2);
+    }
+
+    function parseSvgColor(fillStr) {
+        if (!fillStr) return null;
+        const raw = fillStr.trim().toLowerCase();
+        const m = raw.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+        if (raw.startsWith('#') && raw.length === 7) return hexToRgb(raw);
+        return null;
+    }
+
+    function luminanciaRgb(rgb) {
+        return 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b;
+    }
+
+    function escurecerHex(hex, fator = 0.6) {
+        const rgb = hexToRgb(hex);
+        return rgbToHex({ r: rgb.r * fator, g: rgb.g * fator, b: rgb.b * fator });
+    }
+
+    function obterConfigSensibilidade(sensibilidade, pathomitBase, usarMultiCor) {
+        const precisao = clampNum((sensibilidade - 10) / 140, 0, 1);
+        const base = clampNum(pathomitBase, 4, 64);
+        return {
+            precisao,
+            ltres: usarMultiCor
+                ? clampNum(1.05 - precisao * 0.68, 0.28, 1.05)
+                : clampNum(1.15 - precisao * 0.92, 0.18, 1.10),
+            qtres: usarMultiCor
+                ? clampNum(0.95 - precisao * 0.62, 0.24, 1.00)
+                : clampNum(1.10 - precisao * 0.88, 0.18, 1.00),
+            pathomit: Math.round(clampNum(base + (0.5 - precisao) * 12, 3, 48)),
+            blurExtra: usarMultiCor
+                ? clampNum(0.55 - precisao * 0.40, 0, 0.60)
+                : clampNum(0.30 - precisao * 0.20, 0, 0.30),
+            colorquantcycles: usarMultiCor ? Math.round(4 + precisao * 4) : 1,
+            mincolorratio: usarMultiCor ? clampNum(0.003 + (1 - precisao) * 0.008, 0.002, 0.012) : 0,
+            contourWidth: clampNum(0.42 + precisao * 0.34, 0.42, 0.86),
+            smoothEpsilon: clampNum(2.30 - precisao * 1.75, 0.45, 2.30),
+            cannyLow: Math.round(clampNum(75 - precisao * 35, 28, 90)),
+            cannyHigh: Math.round(clampNum(180 - precisao * 70, 80, 190)),
+        };
+    }
+
+    function detectarCorContorno(img, analise) {
+        if (!img || !analise) return null;
+        if (analise.tipo === 'foto' && analise.bordas < 0.10) return null;
+
+        const size = 96;
+        const c = document.createElement('canvas');
+        c.width = c.height = size;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, size, size);
+        const raw = ctx.getImageData(0, 0, size, size).data;
+        const freq = {};
+        let validos = 0;
+
+        for (let i = 0; i < raw.length; i += 4) {
+            if (raw[i + 3] < 120) continue;
+            const rgb = {
+                r: Math.round(raw[i] / 16) * 16,
+                g: Math.round(raw[i + 1] / 16) * 16,
+                b: Math.round(raw[i + 2] / 16) * 16,
+            };
+            const lum = luminanciaRgb(rgb);
+            const max = Math.max(rgb.r, rgb.g, rgb.b);
+            const min = Math.min(rgb.r, rgb.g, rgb.b);
+            const sat = max === 0 ? 0 : (max - min) / max;
+            if (lum > 170) continue;
+            if (window._corFundo && corDistRgb(rgb, window._corFundo) < 42) continue;
+            if (lum > 120 && sat < 0.16) continue;
+            const key = `${rgb.r},${rgb.g},${rgb.b}`;
+            freq[key] = (freq[key] || 0) + 1;
+            validos++;
+        }
+
+        if (!validos) return null;
+        const entrada = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+        if (!entrada || entrada[1] / validos < 0.025) return null;
+        const [r, g, b] = entrada[0].split(',').map(Number);
+        return rgbToHex({ r, g, b });
+    }
+
+    function deveAplicarContorno(analise, corContorno) {
+        if (!analise || !corContorno) return false;
+        if (analise.tipo === 'lineart') return true;
+        if (analise.tipo === 'desenho') return analise.bordas > 0.06 || analise.contraste > 0.18;
+        return analise.bordas > 0.13 && analise.contraste > 0.16;
+    }
+
+    function escolherCorContorno(fillHex, corContornoBase) {
+        if (!corContornoBase) return escurecerHex(fillHex, 0.58);
+        return corDistRgb(hexToRgb(fillHex), hexToRgb(corContornoBase)) < 80
+            ? corContornoBase
+            : escurecerHex(fillHex, 0.58);
+    }
+
+    function amostrarCorBBox(imageData, width, height, bb, paleta, corFundo) {
+        if (!bb || bb.width <= 0 || bb.height <= 0) return null;
+        const data = imageData.data;
+        const cols = bb.width < 14 ? 3 : 5;
+        const rows = bb.height < 14 ? 3 : 5;
+        let somaR = 0, somaG = 0, somaB = 0, total = 0;
+
+        for (let yi = 0; yi < rows; yi++) {
+            for (let xi = 0; xi < cols; xi++) {
+                const px = clampNum(Math.round(bb.x + ((xi + 0.5) / cols) * bb.width), 0, width - 1);
+                const py = clampNum(Math.round(bb.y + ((yi + 0.5) / rows) * bb.height), 0, height - 1);
+                const idx = (py * width + px) * 4;
+                const rgb = { r: data[idx], g: data[idx + 1], b: data[idx + 2] };
+                if (data[idx + 3] < 40) continue;
+                if (rgb.r > 245 && rgb.g > 245 && rgb.b > 245) continue;
+                if (corFundo && corDistRgb(rgb, corFundo) < 46) continue;
+                somaR += rgb.r;
+                somaG += rgb.g;
+                somaB += rgb.b;
+                total++;
+            }
+        }
+
+        if (!total) return null;
+        const media = {
+            r: Math.round(somaR / total),
+            g: Math.round(somaG / total),
+            b: Math.round(somaB / total),
+        };
+        if (!paleta || !paleta.length) return rgbToHex(media);
+
+        let melhorCor = paleta[0];
+        let melhorDist = Infinity;
+        paleta.forEach(hex => {
+            const dist = corDistRgb(media, hexToRgb(hex));
+            if (dist < melhorDist) {
+                melhorDist = dist;
+                melhorCor = hex;
+            }
+        });
+        return melhorCor;
+    }
+
     // Vetorização com OpenCV — detecção de bordas Canny
-    function vetorizarContornos(img, corTraco, larguraTraco = 2) {
+    function vetorizarContornos(img, corTraco, larguraTraco = 2, sensibilidade = obterSensibilidadeVetorizacao()) {
         return new Promise((resolve, reject) => {
             try {
-                let src = cv.imread(img);
-                let gray = new cv.Mat();
+                const cfgSens = obterConfigSensibilidade(sensibilidade, 10, false);
+                const src = cv.imread(img);
+                const gray = new cv.Mat();
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-                let blurred = new cv.Mat();
-                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 1.5);
+                const blurred = new cv.Mat();
+                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 1.3);
 
-                let edges = new cv.Mat();
-                cv.Canny(blurred, edges, 50, 150);
+                const edges = new cv.Mat();
+                cv.Canny(blurred, edges, cfgSens.cannyLow, cfgSens.cannyHigh);
 
-                let contours = new cv.MatVector();
-                let hierarchy = new cv.Mat();
-                cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                const contours = new cv.MatVector();
+                const hierarchy = new cv.Mat();
+                cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
 
                 const ns = 'http://www.w3.org/2000/svg';
                 const svgEl = document.createElementNS(ns, 'svg');
                 svgEl.setAttribute('width', img.width);
                 svgEl.setAttribute('height', img.height);
                 svgEl.setAttribute('viewBox', `0 0 ${img.width} ${img.height}`);
+                svgEl.setAttribute('shape-rendering', 'geometricPrecision');
 
                 for (let i = 0; i < contours.size(); i++) {
-                    let contour = contours.get(i);
-                    let points = [];
-                    for (let j = 0; j < contour.data32S.length; j += 2) {
-                        points.push({ x: contour.data32S[j], y: contour.data32S[j+1] });
+                    const contour = contours.get(i);
+                    if (cv.contourArea(contour) < 12) {
+                        contour.delete();
+                        continue;
                     }
-                    if (points.length < 3) continue;
-
-                    let d = `M ${points[0].x} ${points[0].y}`;
-                    for (let k = 1; k < points.length; k++) {
-                        d += ` L ${points[k].x} ${points[k].y}`;
+                    const approx = new cv.Mat();
+                    cv.approxPolyDP(contour, approx, cfgSens.smoothEpsilon, true);
+                    const srcPts = approx.data32S.length ? approx.data32S : contour.data32S;
+                    const points = [];
+                    for (let j = 0; j < srcPts.length; j += 2) {
+                        points.push({ x: srcPts[j], y: srcPts[j + 1] });
                     }
-                    d += ' Z';
-
-                    let path = document.createElementNS(ns, 'path');
-                    path.setAttribute('d', d);
-                    path.setAttribute('fill', 'none');
-                    path.setAttribute('stroke', corTraco);
-                    path.setAttribute('stroke-width', larguraTraco);
-                    path.setAttribute('stroke-linecap', 'round');
-                    path.setAttribute('stroke-linejoin', 'round');
-                    svgEl.appendChild(path);
+                    if (points.length >= 3) {
+                        const path = document.createElementNS(ns, 'path');
+                        path.setAttribute('d', pontosParaPath(points) + ' Z');
+                        path.setAttribute('fill', 'none');
+                        path.setAttribute('stroke', corTraco);
+                        path.setAttribute('stroke-width', larguraTraco);
+                        path.setAttribute('stroke-linecap', 'round');
+                        path.setAttribute('stroke-linejoin', 'round');
+                        path.setAttribute('paint-order', 'stroke');
+                        svgEl.appendChild(path);
+                    }
+                    approx.delete();
+                    contour.delete();
                 }
 
-                src.delete(); gray.delete(); blurred.delete();
-                edges.delete(); contours.delete(); hierarchy.delete();
+                src.delete();
+                gray.delete();
+                blurred.delete();
+                edges.delete();
+                contours.delete();
+                hierarchy.delete();
 
                 resolve(svgEl);
-            } catch(e) { reject(e); }
+            } catch (e) {
+                reject(e);
+            }
         });
     }
 
     window.confirmarCor = () => {
         const cor1 = document.getElementById('modal-color').value;
         const paletaAuto = (window._paletaDetectada && window._paletaDetectada.length > 0)
-            ? window._paletaDetectada : null;
-        const usarMultiCor = paletaAuto && paletaAuto.length > 1;
+            ? window._paletaDetectada
+            : null;
+        const usarMultiCor = !!(paletaAuto && paletaAuto.length > 1);
+        const cor2 = document.getElementById('modal-color2')?.value || '#888888';
+        const cor3 = document.getElementById('modal-color3')?.value || '#444444';
+        const sensibilidade = obterSensibilidadeVetorizacao();
+        const analiseAtual = window._analiseVetorAtual || (window.imgParaVetor ? analisarImagem(window.imgParaVetor) : null);
+        if (analiseAtual) window._analiseVetorAtual = analiseAtual;
 
-        // OpenCV Canny: ótimo para lineart (1 cor), mas perde cores em imagens coloridas.
-        // Se a paleta auto-detectada tem >1 cor → força ImageTracer para preservar todas as cores.
+        const coresUsuarioFinal = paletaAuto
+            ? paletaAuto.map(c => c.toLowerCase())
+            : (nrCoresSelecionadas === 1 ? [cor1] : nrCoresSelecionadas === 2 ? [cor1, cor2] : [cor1, cor2, cor3]);
+        const nCores = coresUsuarioFinal.length;
+        const larguraTraco = parseFloat(document.getElementById('brush-size')?.value) || 2;
+        const pathomitBase = parseInt(document.getElementById('pre-pathomit')?.value || 16, 10);
+        const cfgSens = obterConfigSensibilidade(sensibilidade, pathomitBase, usarMultiCor);
+        const corContornoBase = detectarCorContorno(window.imgParaVetor, analiseAtual);
+        const aplicarContorno = usarMultiCor && deveAplicarContorno(analiseAtual, corContornoBase);
+
         if (window._cvReady && window.cv && !usarMultiCor) {
             document.getElementById('modal').style.display = 'none';
             mostrarNotificacao('🚀 Detectando contornos com OpenCV...');
-            const largura = parseFloat(document.getElementById('brush-size')?.value) || 2;
-            vetorizarContornos(window.imgParaVetor, cor1, largura).then(svgEl => {
+            vetorizarContornos(window.imgParaVetor, cor1, larguraTraco, sensibilidade).then(svgEl => {
                 svgArea.innerHTML = svgEl.outerHTML;
                 camadaFoto.svgHTML = svgArea.innerHTML;
                 renderizarTodos();
                 if (painelAberto) renderizarPainel();
+                if (document.getElementById('outline-overlay')?.style.display === 'block') renderizarOutline();
                 mostrarNotificacao('✅ Contornos gerados!');
             }).catch(err => {
                 console.error(err);
-                mostrarNotificacao('❌ Erro OpenCV: ' + err.message);
+                mostrarNotificacao('❌ Erro OpenCV: ' + err.message, 'erro');
             });
             return;
         }
-        // Fallback: ImageTracer (sempre usado para imagens coloridas)
-        const cor2 = document.getElementById('modal-color2')?.value || '#888888';
-        const cor3 = document.getElementById('modal-color3')?.value || '#444444';
-        const sensibilidade = parseFloat(document.getElementById('thresh').value);
-        // Usa paleta auto-detectada completa; caso não exista, usa seleção manual
-        const coresUsuarioFinal = paletaAuto
-            ? paletaAuto
-            : (nrCoresSelecionadas === 1 ? [cor1] : nrCoresSelecionadas === 2 ? [cor1, cor2] : [cor1, cor2, cor3]);
-        const nCores = coresUsuarioFinal.length;
 
         document.getElementById('modal').style.display = 'none';
         mostrarNotificacao('🚀 Processando traço profissional...');
 
         setTimeout(() => {
+            let tmpSvg = null;
             try {
-                // PASSO 1: Pré-processamento com OpenCV (se disponível) ou canvas
                 hCtx.clearRect(0, 0, hCanvas.width, hCanvas.height);
-                const contraste  = document.getElementById('pre-contraste')?.value || 150;
-                const brilho     = document.getElementById('pre-brilho')?.value    || 100;
-                const blurPre    = document.getElementById('pre-blur')?.value      || 1;
-                hCtx.filter = `blur(${blurPre}px) contrast(${contraste}%) brightness(${brilho}%)`;
+                const contraste = parseFloat(document.getElementById('pre-contraste')?.value || 150);
+                const brilho = parseFloat(document.getElementById('pre-brilho')?.value || 100);
+                const blurPre = parseFloat(document.getElementById('pre-blur')?.value || 1);
+                const blurFinal = Math.max(0, blurPre + cfgSens.blurExtra);
+                hCtx.filter = `blur(${blurFinal.toFixed(2)}px) contrast(${contraste}%) brightness(${brilho}%)`;
                 hCtx.drawImage(window.imgParaVetor, 0, 0, hCanvas.width, hCanvas.height);
                 hCtx.filter = 'none';
 
-                let imgData;
-                // adaptiveThreshold: SOMENTE para modo 1 cor (lineart/preto-e-branco).
-                // Modo multicor PRECISA preservar os pixels coloridos originais para o
-                // ImageTracer conseguir mapear cada região à cor correta da paleta.
-                // Aplicar adaptiveThreshold em multicor converte tudo para P&B → canvas preto.
                 if (!usarMultiCor && window._cvReady && window.cv && window.cv.imread) {
                     try {
                         const cv = window.cv;
-                        const src  = cv.imread(hCanvas);
+                        const src = cv.imread(hCanvas);
                         const gray = new cv.Mat();
                         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
                         cv.adaptiveThreshold(gray, gray, 255,
                             cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 10);
                         cv.imshow(hCanvas, gray);
-                        src.delete(); gray.delete();
-                    } catch(cvErr) {
+                        src.delete();
+                        gray.delete();
+                    } catch (cvErr) {
                         console.warn('OpenCV adaptiveThreshold falhou, usando canvas:', cvErr);
                     }
                 }
-                // limparFundo: flood-fill inteligente — remove APENAS pixels de fundo
-                // CONECTADOS à borda da imagem. Áreas claras/brancas INTERNAS do
-                // desenho (reflexos, brilhos, destaques) são preservadas.
+
                 {
-                    const _fd = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
-                    const _pd = _fd.data;
-                    const _w = hCanvas.width;
-                    const _h = hCanvas.height;
-                    const _total = _w * _h;
-                    const _visited = new Uint8Array(_total);
-                    const _remover = new Uint8Array(_total);
+                    const floodData = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
+                    const data = floodData.data;
+                    const width = hCanvas.width;
+                    const height = hCanvas.height;
+                    const total = width * height;
+                    const visited = new Uint8Array(total);
+                    const remover = new Uint8Array(total);
+                    const corFundoDet = window._corFundo;
+                    const limiarBranco = 240;
+                    const limiarCor = 50;
 
-                    // Cor de fundo detectada nas bordas (pode ser null se branco/preto puro)
-                    const _corFundoDet = window._corFundo;
-                    const _LIMIAR_BRANCO = 240;
-                    const _LIMIAR_COR = 50; // distância euclidiana RGB
-
-                    // Verifica se pixel é cor de fundo (branco OU cor detectada)
-                    const _ehFundo = (idx) => {
+                    const ehFundo = (idx) => {
                         const i = idx * 4;
-                        if (_pd[i + 3] === 0) return false; // já transparente
-                        const r = _pd[i], g = _pd[i + 1], b = _pd[i + 2];
-                        // Branco / quase-branco
-                        if (r > _LIMIAR_BRANCO && g > _LIMIAR_BRANCO && b > _LIMIAR_BRANCO) return true;
-                        // Cor de fundo detectada
-                        if (_corFundoDet) {
-                            const dist = Math.sqrt(
-                                (r - _corFundoDet.r) ** 2 +
-                                (g - _corFundoDet.g) ** 2 +
-                                (b - _corFundoDet.b) ** 2
-                            );
-                            if (dist < _LIMIAR_COR) return true;
-                        }
+                        if (data[i + 3] === 0) return false;
+                        const rgb = { r: data[i], g: data[i + 1], b: data[i + 2] };
+                        if (rgb.r > limiarBranco && rgb.g > limiarBranco && rgb.b > limiarBranco) return true;
+                        if (corFundoDet && corDistRgb(rgb, corFundoDet) < limiarCor) return true;
                         return false;
                     };
 
-                    // Semeia flood-fill com todos os pixels das 4 bordas
-                    const _fila = [];
-                    for (let x = 0; x < _w; x++) {
-                        const t = x, bt = (_h - 1) * _w + x;
-                        if (_ehFundo(t))  { _visited[t]  = 1; _remover[t]  = 1; _fila.push(t);  }
-                        if (_ehFundo(bt)) { _visited[bt] = 1; _remover[bt] = 1; _fila.push(bt); }
+                    const fila = [];
+                    for (let x = 0; x < width; x++) {
+                        const top = x;
+                        const bottom = (height - 1) * width + x;
+                        if (ehFundo(top)) { visited[top] = 1; remover[top] = 1; fila.push(top); }
+                        if (ehFundo(bottom)) { visited[bottom] = 1; remover[bottom] = 1; fila.push(bottom); }
                     }
-                    for (let y = 1; y < _h - 1; y++) {
-                        const l = y * _w, r = y * _w + _w - 1;
-                        if (!_visited[l] && _ehFundo(l)) { _visited[l] = 1; _remover[l] = 1; _fila.push(l); }
-                        if (!_visited[r] && _ehFundo(r)) { _visited[r] = 1; _remover[r] = 1; _fila.push(r); }
-                    }
-
-                    // BFS com índice de leitura (O(1) por dequeue, sem shift())
-                    let _qi = 0;
-                    while (_qi < _fila.length) {
-                        const idx = _fila[_qi++];
-                        const x = idx % _w;
-                        const y = (idx / _w) | 0;
-                        if (x > 0)      { const n = idx - 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (x < _w - 1) { const n = idx + 1;   if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (y > 0)      { const n = idx - _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
-                        if (y < _h - 1) { const n = idx + _w;  if (!_visited[n] && _ehFundo(n)) { _visited[n] = 1; _remover[n] = 1; _fila.push(n); } }
+                    for (let y = 1; y < height - 1; y++) {
+                        const left = y * width;
+                        const right = y * width + width - 1;
+                        if (!visited[left] && ehFundo(left)) { visited[left] = 1; remover[left] = 1; fila.push(left); }
+                        if (!visited[right] && ehFundo(right)) { visited[right] = 1; remover[right] = 1; fila.push(right); }
                     }
 
-                    // Torna transparente APENAS os pixels de fundo conectados à borda
-                    for (let i = 0; i < _total; i++) {
-                        if (_remover[i]) _pd[i * 4 + 3] = 0;
+                    let qi = 0;
+                    while (qi < fila.length) {
+                        const idx = fila[qi++];
+                        const x = idx % width;
+                        const y = (idx / width) | 0;
+                        if (x > 0) {
+                            const n = idx - 1;
+                            if (!visited[n] && ehFundo(n)) { visited[n] = 1; remover[n] = 1; fila.push(n); }
+                        }
+                        if (x < width - 1) {
+                            const n = idx + 1;
+                            if (!visited[n] && ehFundo(n)) { visited[n] = 1; remover[n] = 1; fila.push(n); }
+                        }
+                        if (y > 0) {
+                            const n = idx - width;
+                            if (!visited[n] && ehFundo(n)) { visited[n] = 1; remover[n] = 1; fila.push(n); }
+                        }
+                        if (y < height - 1) {
+                            const n = idx + width;
+                            if (!visited[n] && ehFundo(n)) { visited[n] = 1; remover[n] = 1; fila.push(n); }
+                        }
                     }
-                    hCtx.putImageData(_fd, 0, 0);
+
+                    for (let i = 0; i < total; i++) {
+                        if (remover[i]) data[i * 4 + 3] = 0;
+                    }
+                    hCtx.putImageData(floodData, 0, 0);
                 }
-                imgData = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
-                const pathomit = parseInt(document.getElementById('pre-pathomit')?.value || 16);
 
-                // PASSO 2: Paleta e opções baseadas nas cores auto-detectadas
-                const hex2rgb = h => ({ r:parseInt(h.slice(1,3),16), g:parseInt(h.slice(3,5),16), b:parseInt(h.slice(5,7),16), a:255 });
-                const coresUsuario = coresUsuarioFinal; // paleta completa vinda de _paletaDetectada ou fallback manual
-
-                // Helper: distância euclidiana entre duas cores RGB
-                function corDist(c1, c2) {
-                    return Math.sqrt((c1.r-c2.r)**2 + (c1.g-c2.g)**2 + (c1.b-c2.b)**2);
-                }
-                // Helper: extrair RGB de string fill="rgb(r,g,b)" ou hex
-                function parseFillRgb(fillStr) {
-                    if (!fillStr) return null;
-                    const m = fillStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-                    if (m) return {r:+m[1],g:+m[2],b:+m[3]};
-                    if (fillStr.startsWith('#') && fillStr.length === 7) return hex2rgb(fillStr);
-                    return null;
-                }
-                // Paleta para ImageTracer: cores selecionadas + branco transparente (fundo)
-                const palCores = coresUsuario.map(hex2rgb);
-                // Distribui as cores em bandas de luminosidade para separar regiões
-                const pathomitVal = parseInt(document.getElementById('pre-pathomit')?.value || 16);
-
-                let svgString, opcoes;
+                const imgData = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
+                let svgString;
                 if (nCores === 1) {
-                    // Modo 1 cor: paleta binária clássica
-                    opcoes = {
-                        colorsampling: 0, numberofcolors: 2, colorquantcycles: 1,
-                        pal: [{r:0,g:0,b:0,a:255},{r:255,g:255,b:255,a:0}],
-                        ltres:1, qtres:1, pathomit:pathomitVal, blurradius:0,
-                        mincolorratio:0, linefilter:true, strokewidth:0, viewbox:true, scale:1
-                    };
-                    svgString = ImageTracer.imagedataToSVG(imgData, opcoes);
-                } else {
-                    // Modo multicor: usa as cores selecionadas diretamente na paleta do ImageTracer
-                    const palIT = coresUsuario.map(hex2rgb);
-                    palIT.push({r:255,g:255,b:255,a:0}); // fundo transparente
-                    opcoes = {
+                    svgString = ImageTracer.imagedataToSVG(imgData, {
                         colorsampling: 0,
-                        numberofcolors: palIT.length,
-                        colorquantcycles: 5,   // mais ciclos = separação de cores melhor
-                        pal: palIT,
-                        ltres: 0.5, qtres: 0.5, // curvas mais suaves e precisas
-                        pathomit: pathomitVal,
-                        blurradius: 0,          // sem blur — preserva nitidez das bordas de cor
+                        numberofcolors: 2,
+                        colorquantcycles: 1,
+                        pal: [{ r: 0, g: 0, b: 0, a: 255 }, { r: 255, g: 255, b: 255, a: 0 }],
+                        ltres: cfgSens.ltres,
+                        qtres: cfgSens.qtres,
+                        pathomit: cfgSens.pathomit,
+                        blurradius: 0,
                         mincolorratio: 0,
-                        linefilter: false,       // mantém linhas finas (escamas, detalhes)
+                        linefilter: true,
                         strokewidth: 0,
                         viewbox: true,
-                        scale: 1
-                    };
-                    svgString = ImageTracer.imagedataToSVG(imgData, opcoes);
+                        scale: 1,
+                    });
+                } else {
+                    const palIT = coresUsuarioFinal.map(hexToRgb);
+                    palIT.push({ r: 255, g: 255, b: 255, a: 0 });
+                    svgString = ImageTracer.imagedataToSVG(imgData, {
+                        colorsampling: 0,
+                        numberofcolors: palIT.length,
+                        colorquantcycles: cfgSens.colorquantcycles,
+                        pal: palIT,
+                        ltres: cfgSens.ltres,
+                        qtres: cfgSens.qtres,
+                        pathomit: cfgSens.pathomit,
+                        blurradius: 0,
+                        mincolorratio: cfgSens.mincolorratio,
+                        linefilter: false,
+                        strokewidth: 0,
+                        viewbox: true,
+                        scale: 1,
+                    });
                 }
 
-                // PASSO 3: Processa paths — remove fundo, aplica cores corretas
                 const parser = new DOMParser();
                 const svgDoc = parser.parseFromString(svgString, 'image/svg+xml');
+                const svgRoot = svgDoc.querySelector('svg');
                 const caminhos = Array.from(svgDoc.querySelectorAll('path'));
+                const removerFundo = document.getElementById('tm-remover-fundo')?.checked !== false;
 
-                // Insere no DOM temporariamente para getBBox funcionar
-                const tmpSvg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+                if (svgRoot) {
+                    svgRoot.setAttribute('shape-rendering', 'geometricPrecision');
+                    svgRoot.setAttribute('fill-rule', 'nonzero');
+                }
+
+                tmpSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
                 tmpSvg.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;';
                 document.body.appendChild(tmpSvg);
 
-                const larguraTraco = parseFloat(document.getElementById('brush-size')?.value) || 2;
                 caminhos.forEach(path => {
                     const clone = path.cloneNode(true);
                     tmpSvg.appendChild(clone);
+                    let bb = null;
                     let eFundo = false;
                     try {
-                        const bb = clone.getBBox();
-                        eFundo = bb.width > 0 && bb.height > 0 &&
-                                 Math.abs(bb.width  - hCanvas.width)  < 10 &&
-                                 Math.abs(bb.height - hCanvas.height) < 10;
-                    } catch(e) {
-                        const fill = (path.getAttribute('fill')||'').toLowerCase();
+                        bb = clone.getBBox();
+                        const areaCanvas = hCanvas.width * hCanvas.height;
+                        eFundo = bb.width > 0 && bb.height > 0 && (
+                            (Math.abs(bb.width - hCanvas.width) < 10 && Math.abs(bb.height - hCanvas.height) < 10) ||
+                            (bb.width * bb.height) > areaCanvas * 0.92
+                        );
+                    } catch (e) {
+                        const fill = (path.getAttribute('fill') || '').toLowerCase();
                         eFundo = fill.includes('255,255,255') || fill === '#ffffff' || fill === 'white';
                     }
                     tmpSvg.removeChild(clone);
                     if (eFundo) { path.remove(); return; }
 
-                    const fillAtual = path.getAttribute('fill') || '';
-                    const eBranco = fillAtual.toLowerCase().includes('255,255,255') ||
-                                    fillAtual.toLowerCase() === '#ffffff' ||
-                                    fillAtual.toLowerCase() === 'white';
-                    // Só remove branco se o path tocar a borda do canvas (=fundo residual)
-                    // ou ocupar área muito grande. Áreas brancas internas são preservadas.
-                    if (eBranco) {
-                        try {
-                            const cloneB = path.cloneNode(true);
-                            tmpSvg.appendChild(cloneB);
-                            const bbB = cloneB.getBBox();
-                            tmpSvg.removeChild(cloneB);
-                            const margem = 3;
-                            const tocaBorda = bbB.x <= margem || bbB.y <= margem ||
-                                              (bbB.x + bbB.width) >= hCanvas.width - margem ||
-                                              (bbB.y + bbB.height) >= hCanvas.height - margem;
-                            const areaGrande = (bbB.width * bbB.height) > (hCanvas.width * hCanvas.height * 0.15);
-                            if (tocaBorda || areaGrande) { path.remove(); return; }
-                        } catch(e) {
-                            path.remove(); return;
-                        }
+                    const fillAtual = (path.getAttribute('fill') || '').toLowerCase();
+                    const fillRgb = parseSvgColor(fillAtual);
+                    const eBranco = fillAtual.includes('255,255,255') || fillAtual === '#ffffff' || fillAtual === 'white';
+                    const margem = 3;
+                    const tocaBorda = !!bb && (
+                        bb.x <= margem || bb.y <= margem ||
+                        (bb.x + bb.width) >= hCanvas.width - margem ||
+                        (bb.y + bb.height) >= hCanvas.height - margem
+                    );
+                    const areaGrande = !!bb && (bb.width * bb.height) > (hCanvas.width * hCanvas.height * 0.15);
+
+                    if (eBranco && (tocaBorda || areaGrande)) {
+                        path.remove();
+                        return;
                     }
 
-                    // Remove paths com a cor de fundo detectada (se opção ativa)
-                    const removerFundo = document.getElementById('tm-remover-fundo')?.checked !== false;
-                    if (removerFundo && window._corFundo) {
-                        const fillRgbFundo = parseFillRgb(fillAtual);
-                        if (fillRgbFundo && corDist(fillRgbFundo, window._corFundo) < 45) {
-                            path.remove(); return;
-                        }
+                    if (removerFundo && window._corFundo && fillRgb && corDistRgb(fillRgb, window._corFundo) < 45) {
+                        path.remove();
+                        return;
                     }
+
+                    path.removeAttribute('opacity');
+                    path.removeAttribute('fill-opacity');
+                    path.setAttribute('stroke-linecap', 'round');
+                    path.setAttribute('stroke-linejoin', 'round');
+                    path.setAttribute('paint-order', 'stroke fill');
 
                     if (nCores === 1) {
-                        // Modo 1 cor: tudo stroke com cor1
                         path.setAttribute('fill', 'none');
                         path.setAttribute('stroke', cor1);
                         path.setAttribute('stroke-width', larguraTraco);
-                        path.setAttribute('stroke-linecap', 'round');
-                        path.setAttribute('stroke-linejoin', 'round');
-                        path.removeAttribute('opacity');
-                    } else {
-                        // Modo multicor: identifica qual cor do usuário melhor corresponde ao fill gerado
-                        const fillRgb = parseFillRgb(fillAtual);
-                        if (fillRgb) {
-                            // Encontra a cor mais próxima na paleta do usuário
-                            let melhorCor = coresUsuario[0];
-                            let melhorDist = Infinity;
-                            coresUsuario.forEach(hex => {
-                                const rgb = hex2rgb(hex);
-                                const d = corDist(fillRgb, rgb);
-                                if (d < melhorDist) { melhorDist = d; melhorCor = hex; }
-                            });
-                            // Aplica fill sólido com a cor identificada (mantém a área colorida)
-                            path.setAttribute('fill', melhorCor);
-                            path.setAttribute('stroke', melhorCor);
-                            path.setAttribute('stroke-width', Math.max(0.5, larguraTraco * 0.3));
-                            path.setAttribute('stroke-linejoin', 'round');
-                            path.removeAttribute('opacity');
-                        } else {
-                            // Fallback: usa cor1
-                            path.setAttribute('fill', cor1);
-                            path.setAttribute('stroke', cor1);
-                            path.setAttribute('stroke-width', Math.max(0.5, larguraTraco * 0.3));
-                            path.removeAttribute('opacity');
-                        }
+                        return;
                     }
+
+                    let corPreenchimento = null;
+                    if (fillRgb) {
+                        let melhorCor = coresUsuarioFinal[0];
+                        let melhorDist = Infinity;
+                        coresUsuarioFinal.forEach(hex => {
+                            const dist = corDistRgb(fillRgb, hexToRgb(hex));
+                            if (dist < melhorDist) {
+                                melhorDist = dist;
+                                melhorCor = hex;
+                            }
+                        });
+                        corPreenchimento = melhorCor;
+                    }
+
+                    if (eBranco || !corPreenchimento) {
+                        corPreenchimento = amostrarCorBBox(
+                            imgData,
+                            hCanvas.width,
+                            hCanvas.height,
+                            bb,
+                            coresUsuarioFinal,
+                            window._corFundo
+                        ) || corPreenchimento || coresUsuarioFinal[0];
+                    }
+
+                    const corStroke = aplicarContorno
+                        ? escolherCorContorno(corPreenchimento, corContornoBase)
+                        : corPreenchimento;
+                    const larguraStroke = aplicarContorno
+                        ? Math.max(0.6, larguraTraco * cfgSens.contourWidth)
+                        : Math.max(0.35, larguraTraco * 0.18);
+
+                    path.setAttribute('fill', corPreenchimento);
+                    path.setAttribute('stroke', corStroke);
+                    path.setAttribute('stroke-width', larguraStroke);
                 });
 
-                document.body.removeChild(tmpSvg);
                 const svgFinal = new XMLSerializer().serializeToString(svgDoc);
                 svgArea.innerHTML = svgFinal;
                 camadaFoto.svgHTML = svgArea.innerHTML;
 
                 renderizarTodos();
                 if (painelAberto) renderizarPainel();
+                if (document.getElementById('outline-overlay')?.style.display === 'block') renderizarOutline();
                 mostrarNotificacao('✅ Vetorização concluída!');
             } catch (e) {
                 console.error('Erro na vetorização:', e);
-                mostrarNotificacao('❌ Erro ao processar imagem');
+                mostrarNotificacao('❌ Erro ao processar imagem', 'erro');
+            } finally {
+                if (tmpSvg && tmpSvg.parentNode) tmpSvg.parentNode.removeChild(tmpSvg);
             }
         }, 100);
     };
@@ -4903,6 +5110,7 @@ window.addEventListener('load', () => {
                         const _analisar = () => {
                             try {
                                 const a = analisarImagem(imgAnl);
+                                window._analiseVetorAtual = a;
                                 const tagEl = document.getElementById('tm-tipo-img-tag');
                                 const mapaTipo = {
                                     foto:    { cls: 'tm-tag-foto',    txt: '📷 Foto'    },
