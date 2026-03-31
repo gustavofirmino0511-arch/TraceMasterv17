@@ -3985,23 +3985,35 @@ window.addEventListener('load', () => {
         }
         const densidadeBordas = totalBorda / N; // 0–1
 
-        // Passo 5: classificação do tipo
-        // Lineart: alto contraste, alta borda, baixa saturação
-        // Desenho: alto contraste, bordas medianas, saturação variável
-        // Foto:    contraste moderado, bordas baixas, alta saturação
+        // Passo 5: extrair cores dominantes antes da classificação final.
+        // Isso evita chamar de lineart uma ilustração com outline preto,
+        // mas que ainda possui muitas cores relevantes.
+        const coresDom = extrairCoresDominantes(raw, 16, saturacaoMedia);
+        const nCoresDom = coresDom.length;
+        const coloridaComOutline = nCoresDom >= 6 || saturacaoMedia > 0.18;
+
+        // Passo 6: classificação do tipo
+        // lineart = essencialmente P&B/tons neutros com poucas cores reais.
         let tipo;
-        if (densidadeBordas > 0.15 && saturacaoMedia < 0.25 && stdBrilho > 0.25) {
+        if (densidadeBordas > 0.15 && saturacaoMedia < 0.16 && stdBrilho > 0.25 && nCoresDom <= 4) {
             tipo = 'lineart';
-        } else if (stdBrilho > 0.2 && densidadeBordas > 0.08) {
+        } else if (stdBrilho > 0.17 && densidadeBordas > 0.07) {
+            tipo = 'desenho';
+        } else if (coloridaComOutline) {
             tipo = 'desenho';
         } else {
             tipo = 'foto';
         }
 
-        // Passo 6: extrair cores dominantes — passa saturação para fusão adaptativa
-        const coresDom = extrairCoresDominantes(raw, 16, saturacaoMedia);
-
-        return { tipo, contraste: stdBrilho, bordas: densidadeBordas, saturacao: saturacaoMedia, coresDom };
+        return {
+            tipo,
+            contraste: stdBrilho,
+            bordas: densidadeBordas,
+            saturacao: saturacaoMedia,
+            coresDom,
+            nCoresDom,
+            coloridaComOutline,
+        };
     }
 
     // ── extrairCoresDominantes: quantização fina + fusão adaptativa de clusters ──
@@ -4159,10 +4171,14 @@ window.addEventListener('load', () => {
                 if (analise.tipo === 'lineart') {
                     contraste = 250; brilho = 110; blur = 0; pathomit = 5;
                 } else if (analise.tipo === 'desenho') {
-                    contraste = 185; brilho = 102; blur = 0.5; pathomit = 8;
+                    const desenhoColorido = analise.coloridaComOutline || analise.nCoresDom >= 6;
+                    contraste = desenhoColorido ? 165 : 185;
+                    brilho = desenhoColorido ? 100 : 102;
+                    blur = desenhoColorido ? 0 : 0.5;
+                    pathomit = desenhoColorido ? 4 : 8;
                 } else {
                     // foto: reforça contraste para separar silhueta do fundo
-                    contraste = 200; brilho = 95; blur = 1.2; pathomit = 12;
+                    contraste = 185; brilho = 98; blur = 0.8; pathomit = 8;
                 }
 
                 // Aplica valores nos sliders
@@ -5295,8 +5311,8 @@ window.addEventListener('load', () => {
                                 const countEl2 = document.getElementById('tm-cores-auto-count');
                                 if (countEl2) countEl2.textContent = a.coresDom.length + ' cor' + (a.coresDom.length !== 1 ? 'es' : '') + ' (auto)';
                                 const msgs = {
-                                    lineart: 'Detectamos um lineart! "Auto Vetorizar" vai configurar tudo automaticamente.',
-                                    desenho: 'Detectamos um desenho. Deseja aplicar configuração automática?',
+                                    lineart: 'Detectamos um lineart real. "Auto Vetorizar" vai manter o traço mais limpo.',
+                                    desenho: 'Detectamos uma ilustração/desenho. O modo automático vai preservar mais cores e reduzir a simplificação.',
                                     foto:    'Imagem fotográfica detectada. "Auto Vetorizar" ajusta tudo pra você!',
                                 };
                                 mostrarSugestao('Imagem analisada!', msgs[a.tipo], () => autoVetorizar());
