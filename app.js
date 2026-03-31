@@ -3987,8 +3987,7 @@ window.addEventListener('load', () => {
             const b = Math.round(raw[i+2] / 16) * 16;
             // Ignora branco de fundo (quase-branco ≥ 230 nos 3 canais)
             if (r >= 230 && g >= 230 && b >= 230) continue;
-            // Ignora preto/sombra escura (≤ 30 nos 3 canais) — sombras não são cores reais
-            if (r <= 30 && g <= 30 && b <= 30) continue;
+            // Nota: preto/escuro NÃO é excluído — em ilustrações cartoon é o contorno principal
             const chave = `${r},${g},${b}`;
             freq[chave] = (freq[chave] || 0) + 1;
             totalPixels++;
