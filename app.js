@@ -4045,6 +4045,41 @@ window.addEventListener('load', () => {
             });
     }
 
+    // ── Detecta cor de fundo amostrando pixels da borda da imagem ────────────
+    // Retorna { r, g, b, hex } da cor mais frequente nas bordas, ou null.
+    function _detectarCorFundo(img) {
+        const sz = 80;
+        const c = document.createElement('canvas');
+        c.width = c.height = sz;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, sz, sz);
+        const d = ctx.getImageData(0, 0, sz, sz).data;
+        const freq = {};
+        const amostrar = (x, y) => {
+            const i = (y * sz + x) * 4;
+            if (d[i+3] < 100) return;
+            const r = Math.round(d[i]   / 16) * 16;
+            const g = Math.round(d[i+1] / 16) * 16;
+            const b = Math.round(d[i+2] / 16) * 16;
+            // ignora branco e preto puros — já são filtrados em outro ponto
+            if (r >= 230 && g >= 230 && b >= 230) return;
+            if (r <= 30  && g <= 30  && b <= 30)  return;
+            freq[`${r},${g},${b}`] = (freq[`${r},${g},${b}`] || 0) + 1;
+        };
+        for (let i = 0; i < sz; i++) {
+            amostrar(i, 0);      // borda superior
+            amostrar(i, sz-1);   // borda inferior
+            amostrar(0, i);      // borda esquerda
+            amostrar(sz-1, i);   // borda direita
+        }
+        const entradas = Object.entries(freq);
+        if (!entradas.length) return null;
+        const [rgb] = entradas.sort((a, b) => b[1] - a[1])[0];
+        const [r, g, b] = rgb.split(',').map(Number);
+        const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+        return { r, g, b, hex };
+    }
+
     // ── autoVetorizar: configura e dispara vetorização inteligente ─────────
     // Analisa a imagem, ajusta todos os parâmetros do modal e inicia vetorização
     window.autoVetorizar = () => {
@@ -4117,6 +4152,20 @@ window.addEventListener('load', () => {
                         const el = document.getElementById(ids[i]);
                         if (el) el.value = c;
                     });
+                }
+
+                // ── Detecta e exibe cor de fundo ────────────────────────────
+                const corFundo = _detectarCorFundo(img);
+                window._corFundo = corFundo;
+                const fundoWrap  = document.getElementById('tm-fundo-wrap');
+                const fundoCor   = document.getElementById('tm-fundo-cor');
+                const fundoLabel = document.getElementById('tm-fundo-label');
+                if (corFundo && fundoWrap) {
+                    fundoCor.style.background = corFundo.hex;
+                    fundoLabel.textContent = corFundo.hex + ' (borda da imagem)';
+                    fundoWrap.style.display = 'flex';
+                } else if (fundoWrap) {
+                    fundoWrap.style.display = 'none';
                 }
 
                 // Atualiza preview
@@ -4636,13 +4685,13 @@ window.addEventListener('load', () => {
                     opcoes = {
                         colorsampling: 0,
                         numberofcolors: palIT.length,
-                        colorquantcycles: 3,
+                        colorquantcycles: 5,   // era 3 → mais ciclos = separação de cores melhor
                         pal: palIT,
-                        ltres: 1, qtres: 1,
+                        ltres: 0.5, qtres: 0.5, // era 1,1 → curvas mais suaves e precisas
                         pathomit: pathomitVal,
-                        blurradius: 0,
+                        blurradius: 1,          // era 0 → suaviza ruído de pixel antes do traço
                         mincolorratio: 0,
-                        linefilter: false,
+                        linefilter: true,        // era false → remove linhas de 1px (ruído)
                         strokewidth: 0,
                         viewbox: true,
                         scale: 1
@@ -4682,6 +4731,15 @@ window.addEventListener('load', () => {
                                     fillAtual.toLowerCase() === '#ffffff' ||
                                     fillAtual.toLowerCase() === 'white';
                     if (eBranco) { path.remove(); return; }
+
+                    // Remove paths com a cor de fundo detectada (se opção ativa)
+                    const removerFundo = document.getElementById('tm-remover-fundo')?.checked !== false;
+                    if (removerFundo && window._corFundo) {
+                        const fillRgbFundo = parseFillRgb(fillAtual);
+                        if (fillRgbFundo && corDist(fillRgbFundo, window._corFundo) < 45) {
+                            path.remove(); return;
+                        }
+                    }
 
                     if (nCores === 1) {
                         // Modo 1 cor: tudo stroke com cor1

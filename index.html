@@ -479,6 +479,18 @@
             <span id="tm-cores-auto-count" style="font-size:11px;color:#03dac6;font-weight:800;">— clique em AUTO VETORIZAR</span>
         </div>
 
+        <!-- Fundo detectado automaticamente -->
+        <div id="tm-fundo-wrap" style="display:none;align-items:center;gap:8px;margin-bottom:10px;">
+            <span style="font-size:10px;color:#888;min-width:60px;">FUNDO</span>
+            <div id="tm-fundo-cor" style="width:18px;height:18px;border-radius:4px;border:1px solid #555;flex-shrink:0;"></div>
+            <span id="tm-fundo-label" style="font-size:10px;color:#aaa;flex:1;"></span>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:10px;color:#03dac6;">
+                <input type="checkbox" id="tm-remover-fundo" checked
+                    style="accent-color:#03dac6;width:14px;height:14px;">
+                Remover
+            </label>
+        </div>
+
         <!-- Inputs internos de cor (compatibilidade com JS — ocultos da UI) -->
         <div style="display:none;">
             <input type="color" id="modal-color"  value="#000000">
