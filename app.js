@@ -3962,17 +3962,21 @@ window.addEventListener('load', () => {
             tipo = 'foto';
         }
 
-        // Passo 6: extrair cores dominantes (quantização simples por clusterização manual)
-        const coresDom = extrairCoresDominantes(raw, 16);
+        // Passo 6: extrair cores dominantes — passa saturação para fusão adaptativa
+        const coresDom = extrairCoresDominantes(raw, 16, saturacaoMedia);
 
         return { tipo, contraste: stdBrilho, bordas: densidadeBordas, saturacao: saturacaoMedia, coresDom };
     }
 
-    // ── extrairCoresDominantes: quantização fina + fusão de clusters ──────────
-    // Usa passo=16 (4 bits/canal) → muito mais cores capturadas vs passo=32 anterior.
-    // Depois funde clusters próximos (distância RGB < 55) para reduzir duplicatas.
-    // Retorna TODAS as cores significativas (≥ 0,4% dos pixels), até maxCores.
-    function extrairCoresDominantes(raw, maxCores = 16) {
+    // ── extrairCoresDominantes: quantização fina + fusão adaptativa de clusters ──
+    // Usa passo=16 (4 bits/canal) para capturar mais cores.
+    // Distância de fusão ADAPTATIVA baseada na saturação da imagem:
+    //   - Baixa saturação  (lineart/P&B):  55 — agrupa tons similares
+    //   - Média saturação  (desenho):       38 — equilíbrio
+    //   - Alta saturação   (fotos/frutas):  24 — preserva cores distintas (vermelho ≠ laranja)
+    // Exclui preto/quase-preto (sombras) assim como exclui branco (fundo).
+    // maxCores aumenta automaticamente para imagens muito coloridas.
+    function extrairCoresDominantes(raw, maxCores = 16, saturacao = 0) {
         const freq = {};
         let totalPixels = 0;
 
@@ -3981,14 +3985,26 @@ window.addEventListener('load', () => {
             const r = Math.round(raw[i]   / 16) * 16;
             const g = Math.round(raw[i+1] / 16) * 16;
             const b = Math.round(raw[i+2] / 16) * 16;
-            // Ignora apenas branco de fundo (quase-branco ≥ 230 nos 3 canais)
+            // Ignora branco de fundo (quase-branco ≥ 230 nos 3 canais)
             if (r >= 230 && g >= 230 && b >= 230) continue;
+            // Ignora preto/sombra escura (≤ 30 nos 3 canais) — sombras não são cores reais
+            if (r <= 30 && g <= 30 && b <= 30) continue;
             const chave = `${r},${g},${b}`;
             freq[chave] = (freq[chave] || 0) + 1;
             totalPixels++;
         }
 
         if (totalPixels === 0) return ['#000000'];
+
+        // Distância de fusão adaptativa: imagens mais saturadas precisam de menos fusão
+        // para preservar diferenças entre vermelho, laranja, amarelo, verde, etc.
+        let distFusao;
+        if (saturacao > 0.5)      distFusao = 24; // ex: foto de frutas coloridas
+        else if (saturacao > 0.2) distFusao = 38; // ex: desenho com alguma cor
+        else                      distFusao = 55; // ex: lineart ou P&B
+
+        // Limite de cores sobe para imagens muito saturadas (frutas podem ter 20+ cores)
+        const limiteCores = saturacao > 0.45 ? Math.max(maxCores, 24) : maxCores;
 
         // Ordena por frequência decrescente
         const entradas = Object.entries(freq)
@@ -3998,13 +4014,13 @@ window.addEventListener('load', () => {
             })
             .sort((a, b) => b.count - a.count);
 
-        // Fusão de clusters próximos: se dist(a,b) < 55 → une no cluster mais frequente
+        // Fusão de clusters próximos com distância adaptativa
         const clusters = [];
         for (const entry of entradas) {
             let merged = false;
             for (const cl of clusters) {
                 const dr = entry.r - cl.r, dg = entry.g - cl.g, db = entry.b - cl.b;
-                if (Math.sqrt(dr*dr + dg*dg + db*db) < 55) {
+                if (Math.sqrt(dr*dr + dg*dg + db*db) < distFusao) {
                     const total = cl.count + entry.count;
                     cl.r = Math.round((cl.r * cl.count + entry.r * entry.count) / total);
                     cl.g = Math.round((cl.g * cl.count + entry.g * entry.count) / total);
@@ -4017,12 +4033,12 @@ window.addEventListener('load', () => {
             if (!merged) clusters.push({ ...entry });
         }
 
-        // Mantém apenas cores com ≥ 0,4% dos pixels (remove ruídos insignificantes)
-        const LIMIAR = totalPixels * 0.004;
+        // Mantém apenas cores com ≥ 0,3% dos pixels (ligeiramente mais sensível que antes)
+        const LIMIAR = totalPixels * 0.003;
         return clusters
             .filter(c => c.count >= LIMIAR)
             .sort((a, b) => b.count - a.count)
-            .slice(0, maxCores)
+            .slice(0, limiteCores)
             .map(c => {
                 const clamp = v => Math.min(255, Math.max(0, v));
                 return '#' + [c.r, c.g, c.b].map(v => clamp(v).toString(16).padStart(2,'0')).join('');
