@@ -4778,106 +4778,258 @@ window.addEventListener('load', () => {
 
 
     function gerarGrupoContornoEscuro(img, corTraco, larguraTraco = 1.2, sensibilidade = obterSensibilidadeVetorizacao(), analise = null) {
-        if (!img || !window.ImageTracer) return null;
+        if (!img || !window._cvReady || !window.cv) return null;
 
+        const cv = window.cv;
         const c = document.createElement('canvas');
         c.width = img.width;
         c.height = img.height;
-        const ctx = c.getContext('2d', { willReadFrequently: true });
+        const ctx = c.getContext('2d');
         ctx.drawImage(img, 0, 0, c.width, c.height);
-        const imgData = ctx.getImageData(0, 0, c.width, c.height);
-        const data = imgData.data;
-        const total = c.width * c.height;
-        const mask = new Uint8Array(total);
+
+        const src = cv.imread(c);
+        const gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+        const blurred = new cv.Mat();
+        cv.GaussianBlur(gray, blurred, new cv.Size(3, 3), 0.8);
+
         const precisao = clampNum((sensibilidade - 10) / 140, 0, 1);
-        const lumBase = analise?.tipo === 'lineart' ? 210 : analise?.tipo === 'desenho' ? 145 : 128;
-        const satBase = analise?.tipo === 'lineart' ? 1 : 0.58;
+        const cannyLow = Math.round(clampNum(48 - precisao * 12, 24, 52));
+        const cannyHigh = Math.round(clampNum(118 - precisao * 18, 72, 120));
+        const edges = new cv.Mat();
+        cv.Canny(blurred, edges, cannyLow, cannyHigh);
 
-        for (let i = 0, px = 0; i < data.length; i += 4, px++) {
-            if (data[i + 3] < 120) continue;
-            const rgb = { r: data[i], g: data[i + 1], b: data[i + 2] };
-            if (window._corFundo && corDistRgb(rgb, window._corFundo) < 34) continue;
-            const lum = luminanciaRgb(rgb);
-            const max = Math.max(rgb.r, rgb.g, rgb.b);
-            const min = Math.min(rgb.r, rgb.g, rgb.b);
-            const sat = max === 0 ? 0 : (max - min) / max;
-            const escuro = lum < lumBase || (lum < lumBase + 14 && sat < satBase);
-            if (escuro) mask[px] = 1;
-        }
+        const darkMask = new cv.Mat();
+        const darkThreshold = analise?.tipo === 'lineart' ? 226 : analise?.tipo === 'desenho' ? 104 : 96;
+        cv.threshold(gray, darkMask, darkThreshold, 255, cv.THRESH_BINARY_INV);
 
-        const expandido = new Uint8Array(total);
-        for (let y = 0; y < c.height; y++) {
-            for (let x = 0; x < c.width; x++) {
-                const idx = y * c.width + x;
-                if (!mask[idx]) continue;
-                for (let oy = -1; oy <= 1; oy++) {
-                    for (let ox = -1; ox <= 1; ox++) {
-                        const nx = x + ox;
-                        const ny = y + oy;
-                        if (nx < 0 || ny < 0 || nx >= c.width || ny >= c.height) continue;
-                        expandido[ny * c.width + nx] = 1;
-                    }
-                }
-            }
-        }
+        const masked = new cv.Mat();
+        cv.bitwise_and(edges, darkMask, masked);
 
-        for (let px = 0, i = 0; px < total; px++, i += 4) {
-            if (expandido[px]) {
-                data[i] = 0;
-                data[i + 1] = 0;
-                data[i + 2] = 0;
-                data[i + 3] = 255;
-            } else {
-                data[i + 3] = 0;
-            }
-        }
+        const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
+        cv.dilate(masked, masked, kernel);
+        cv.morphologyEx(masked, masked, cv.MORPH_CLOSE, kernel);
 
-        const svgString = ImageTracer.imagedataToSVG(imgData, {
-            colorsampling: 0,
-            numberofcolors: 2,
-            colorquantcycles: 1,
-            pal: [{ r: 0, g: 0, b: 0, a: 255 }, { r: 255, g: 255, b: 255, a: 0 }],
-            ltres: clampNum(0.72 - precisao * 0.34, 0.30, 0.72),
-            qtres: clampNum(0.70 - precisao * 0.36, 0.28, 0.70),
-            pathomit: Math.round(clampNum(9 - precisao * 5, 3, 9)),
-            blurradius: 0,
-            mincolorratio: 0,
-            linefilter: true,
-            strokewidth: 0,
-            viewbox: true,
-            scale: 1,
-        });
-
-        const parser = new DOMParser();
-        const svgDoc = parser.parseFromString(svgString, 'image/svg+xml');
-        const paths = Array.from(svgDoc.querySelectorAll('path'));
-        if (!paths.length) return null;
+        const contours = new cv.MatVector();
+        const hierarchy = new cv.Mat();
+        cv.findContours(masked, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
 
         const ns = 'http://www.w3.org/2000/svg';
         const g = document.createElementNS(ns, 'g');
         g.setAttribute('data-tm-auto-outline', '1');
-        g.setAttribute('fill', 'none');
-        g.setAttribute('stroke', corTraco);
-        g.setAttribute('stroke-width', larguraTraco);
-        g.setAttribute('stroke-linecap', 'round');
-        g.setAttribute('stroke-linejoin', 'round');
-        g.setAttribute('paint-order', 'stroke');
 
-        paths.forEach(path => {
-            const d = path.getAttribute('d');
-            if (!d) return;
-            const p = document.createElementNS(ns, 'path');
-            p.setAttribute('d', d);
-            p.setAttribute('fill', 'none');
-            p.setAttribute('stroke', corTraco);
-            p.setAttribute('stroke-width', larguraTraco);
-            p.setAttribute('stroke-linecap', 'round');
-            p.setAttribute('stroke-linejoin', 'round');
-            p.setAttribute('paint-order', 'stroke');
-            g.appendChild(p);
-        });
+        for (let i = 0; i < contours.size(); i++) {
+            const contour = contours.get(i);
+            if (contour.data32S.length < 20) {
+                contour.delete();
+                continue;
+            }
+            const approx = new cv.Mat();
+            cv.approxPolyDP(contour, approx, clampNum(1.2 - precisao * 0.4, 0.6, 1.2), true);
+            const srcPts = approx.data32S.length ? approx.data32S : contour.data32S;
+            const points = [];
+            for (let j = 0; j < srcPts.length; j += 2) {
+                points.push({ x: srcPts[j], y: srcPts[j + 1] });
+            }
+            if (points.length >= 4) {
+                const p = document.createElementNS(ns, 'path');
+                p.setAttribute('d', pontosParaPath(points) + ' Z');
+                p.setAttribute('fill', 'none');
+                p.setAttribute('stroke', corTraco);
+                p.setAttribute('stroke-width', larguraTraco);
+                p.setAttribute('stroke-linecap', 'round');
+                p.setAttribute('stroke-linejoin', 'round');
+                p.setAttribute('paint-order', 'stroke');
+                g.appendChild(p);
+            }
+            approx.delete();
+            contour.delete();
+        }
+
+        src.delete();
+        gray.delete();
+        blurred.delete();
+        edges.delete();
+        darkMask.delete();
+        masked.delete();
+        kernel.delete();
+        contours.delete();
+        hierarchy.delete();
 
         return g.childNodes.length ? g : null;
+    }
+
+    function suavizarRotulosPaleta(labels, width, height, numCores, passes = 1) {
+        let src = labels;
+        for (let pass = 0; pass < passes; pass++) {
+            const dst = new Int16Array(src);
+            const counts = new Int16Array(numCores);
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = y * width + x;
+                    const atual = src[idx];
+                    if (atual < 0) continue;
+
+                    counts.fill(0);
+                    for (let oy = -1; oy <= 1; oy++) {
+                        for (let ox = -1; ox <= 1; ox++) {
+                            if (ox === 0 && oy === 0) continue;
+                            const viz = src[idx + oy * width + ox];
+                            if (viz >= 0) counts[viz]++;
+                        }
+                    }
+
+                    let melhorLabel = atual;
+                    let melhorCount = counts[atual] || 0;
+                    for (let c = 0; c < numCores; c++) {
+                        if (counts[c] > melhorCount) {
+                            melhorCount = counts[c];
+                            melhorLabel = c;
+                        }
+                    }
+
+                    if (melhorLabel !== atual && melhorCount >= 5 && (counts[atual] || 0) <= 2) {
+                        dst[idx] = melhorLabel;
+                    }
+                }
+            }
+            src = dst;
+        }
+        return src;
+    }
+
+    function quantizarImageDataParaPaleta(imageData, paleta, corFundo = null, passesSuavizacao = 2) {
+        const width = imageData.width;
+        const height = imageData.height;
+        const src = imageData.data;
+        const out = new Uint8ClampedArray(src.length);
+        const labels = new Int16Array(width * height);
+        labels.fill(-1);
+        const paletaRgb = paleta.map(hexToRgb);
+
+        for (let px = 0, i = 0; px < labels.length; px++, i += 4) {
+            if (src[i + 3] < 40) {
+                out[i + 3] = 0;
+                continue;
+            }
+            const rgb = { r: src[i], g: src[i + 1], b: src[i + 2] };
+            if (corFundo && corDistRgb(rgb, corFundo) < 20) {
+                out[i + 3] = 0;
+                continue;
+            }
+            let melhor = 0;
+            let melhorDist = Infinity;
+            for (let c = 0; c < paletaRgb.length; c++) {
+                const dist = corDistRgb(rgb, paletaRgb[c]);
+                if (dist < melhorDist) {
+                    melhorDist = dist;
+                    melhor = c;
+                }
+            }
+            labels[px] = melhor;
+        }
+
+        const labelsSuaves = suavizarRotulosPaleta(labels, width, height, paletaRgb.length, passesSuavizacao);
+
+        for (let px = 0, i = 0; px < labelsSuaves.length; px++, i += 4) {
+            const label = labelsSuaves[px];
+            if (label < 0) {
+                out[i + 3] = 0;
+                continue;
+            }
+            const cor = paletaRgb[label];
+            out[i] = cor.r;
+            out[i + 1] = cor.g;
+            out[i + 2] = cor.b;
+            out[i + 3] = 255;
+        }
+
+        return {
+            imageData: new ImageData(out, width, height),
+            labels: labelsSuaves,
+            paletaRgb,
+        };
+    }
+
+    function vetorizarMulticorPorCamadas(imgData, paleta, larguraTraco, cfgSens, sensibilidade, analiseAtual, corContornoBase, aplicarContorno) {
+        const cv = window.cv;
+        const width = imgData.width;
+        const height = imgData.height;
+        const { labels } = quantizarImageDataParaPaleta(imgData, paleta, window._corFundo, 2);
+        const ns = 'http://www.w3.org/2000/svg';
+        const svgEl = document.createElementNS(ns, 'svg');
+        svgEl.setAttribute('width', width);
+        svgEl.setAttribute('height', height);
+        svgEl.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+        svgEl.setAttribute('shape-rendering', 'geometricPrecision');
+        svgEl.setAttribute('fill-rule', 'nonzero');
+
+        const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.85, 0.6, 1.6);
+        const strokeFill = Math.max(0.45, larguraTraco * 0.12);
+        const minArea = 6;
+
+        for (let corIdx = 0; corIdx < paleta.length; corIdx++) {
+            const mask = new cv.Mat(height, width, cv.CV_8UC1);
+            mask.data.fill(0);
+            for (let i = 0; i < labels.length; i++) {
+                if (labels[i] === corIdx) mask.data[i] = 255;
+            }
+
+            cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+
+            const contours = new cv.MatVector();
+            const hierarchy = new cv.Mat();
+            cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
+
+            for (let i = 0; i < contours.size(); i++) {
+                const contour = contours.get(i);
+                if (cv.contourArea(contour) < minArea) {
+                    contour.delete();
+                    continue;
+                }
+                const approx = new cv.Mat();
+                cv.approxPolyDP(contour, approx, epsilon, true);
+                const srcPts = approx.data32S.length ? approx.data32S : contour.data32S;
+                const points = [];
+                for (let j = 0; j < srcPts.length; j += 2) {
+                    points.push({ x: srcPts[j], y: srcPts[j + 1] });
+                }
+                if (points.length >= 3) {
+                    const path = document.createElementNS(ns, 'path');
+                    path.setAttribute('d', pontosParaPath(points) + ' Z');
+                    path.setAttribute('fill', paleta[corIdx]);
+                    path.setAttribute('stroke', paleta[corIdx]);
+                    path.setAttribute('stroke-width', strokeFill);
+                    path.setAttribute('stroke-linecap', 'round');
+                    path.setAttribute('stroke-linejoin', 'round');
+                    svgEl.appendChild(path);
+                }
+                approx.delete();
+                contour.delete();
+            }
+
+            mask.delete();
+            contours.delete();
+            hierarchy.delete();
+        }
+
+        kernel.delete();
+
+        if (aplicarContorno) {
+            const outlineGroup = gerarGrupoContornoEscuro(
+                window.imgParaVetor,
+                corContornoBase || '#1a1a1a',
+                Math.max(0.75, larguraTraco * 0.42),
+                sensibilidade,
+                analiseAtual
+            );
+            if (outlineGroup) svgEl.appendChild(outlineGroup);
+        }
+
+        return svgEl;
     }
 
     // Vetorização com OpenCV — detecção de bordas Canny
@@ -5083,6 +5235,27 @@ window.addEventListener('load', () => {
                 }
 
                 const imgData = hCtx.getImageData(0, 0, hCanvas.width, hCanvas.height);
+
+                if (usarMultiCor && window._cvReady && window.cv) {
+                    const svgEl = vetorizarMulticorPorCamadas(
+                        imgData,
+                        coresUsuarioFinal,
+                        larguraTraco,
+                        cfgSens,
+                        sensibilidade,
+                        analiseAtual,
+                        corContornoBase,
+                        aplicarContorno
+                    );
+                    svgArea.innerHTML = svgEl.outerHTML;
+                    camadaFoto.svgHTML = svgArea.innerHTML;
+                    renderizarTodos();
+                    if (painelAberto) renderizarPainel();
+                    if (document.getElementById('outline-overlay')?.style.display === 'block') renderizarOutline();
+                    mostrarNotificacao('✅ Vetorização concluída!');
+                    return;
+                }
+
                 let svgString;
                 if (nCores === 1) {
                     svgString = ImageTracer.imagedataToSVG(imgData, {
