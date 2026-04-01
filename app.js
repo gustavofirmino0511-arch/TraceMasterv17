@@ -4066,14 +4066,14 @@ window.addEventListener('load', () => {
         // Passo 5: extrair cores dominantes antes da classificação final.
         // Isso evita chamar de lineart uma ilustração com outline preto,
         // mas que ainda possui muitas cores relevantes.
-        const coresDom = extrairCoresDominantes(raw, 16, saturacaoMedia);
-        const nCoresDom = coresDom.length;
-        const coloridaComOutline = nCoresDom >= 6 || saturacaoMedia > 0.18;
+        const coresBrutas = extrairCoresDominantes(raw, 16, saturacaoMedia);
+        const nCoresBase = coresBrutas.length;
+        const coloridaComOutline = nCoresBase >= 6 || saturacaoMedia > 0.18;
 
         // Passo 6: classificação do tipo
         // lineart = essencialmente P&B/tons neutros com poucas cores reais.
         let tipo;
-        if (densidadeBordas > 0.15 && saturacaoMedia < 0.16 && stdBrilho > 0.25 && nCoresDom <= 4) {
+        if (densidadeBordas > 0.15 && saturacaoMedia < 0.16 && stdBrilho > 0.25 && nCoresBase <= 4) {
             tipo = 'lineart';
         } else if (stdBrilho > 0.17 && densidadeBordas > 0.07) {
             tipo = 'desenho';
@@ -4083,13 +4083,20 @@ window.addEventListener('load', () => {
             tipo = 'foto';
         }
 
+        const coresDom = refinarPaletaDetectada(coresBrutas, {
+            tipo,
+            saturacao: saturacaoMedia,
+            contraste: stdBrilho,
+        });
+
         return {
             tipo,
             contraste: stdBrilho,
             bordas: densidadeBordas,
             saturacao: saturacaoMedia,
             coresDom,
-            nCoresDom,
+            nCoresDom: coresDom.length,
+            nCoresBase,
             coloridaComOutline,
         };
     }
@@ -4168,6 +4175,48 @@ window.addEventListener('load', () => {
                 const clamp = v => Math.min(255, Math.max(0, v));
                 return '#' + [c.r, c.g, c.b].map(v => clamp(v).toString(16).padStart(2,'0')).join('');
             });
+    }
+
+    function refinarPaletaDetectada(cores, contexto = {}) {
+        if (!Array.isArray(cores) || !cores.length) return ['#000000'];
+        const tipo = contexto.tipo || 'desenho';
+        const saturacao = contexto.saturacao || 0;
+        const limite = tipo === 'lineart' ? 4 : (saturacao > 0.48 ? 10 : 8);
+        const distanciaMin = tipo === 'lineart' ? 42 : (saturacao > 0.48 ? 32 : 38);
+        const resultado = [];
+
+        for (const hex of cores) {
+            const corAtual = hexToRgb(hex);
+            const redundante = resultado.some((keepHex) => {
+                const keepRgb = hexToRgb(keepHex);
+                const dist = corDistRgb(corAtual, keepRgb);
+                const lumDelta = Math.abs(luminanciaRgb(corAtual) - luminanciaRgb(keepRgb));
+                return dist < distanciaMin || (dist < distanciaMin * 1.28 && lumDelta < 18);
+            });
+            if (!redundante) resultado.push(hex.toLowerCase());
+            if (resultado.length >= limite) break;
+        }
+
+        const minimoVariedade = Math.min(tipo === 'lineart' ? 2 : 4, cores.length, limite);
+        if (resultado.length < minimoVariedade) {
+            const faltantes = cores
+                .map(hex => hex.toLowerCase())
+                .filter(hex => !resultado.includes(hex))
+                .map(hex => {
+                    const rgb = hexToRgb(hex);
+                    let menorDist = Infinity;
+                    resultado.forEach((keepHex) => {
+                        menorDist = Math.min(menorDist, corDistRgb(rgb, hexToRgb(keepHex)));
+                    });
+                    return { hex, menorDist };
+                })
+                .sort((a, b) => b.menorDist - a.menorDist);
+            while (resultado.length < minimoVariedade && faltantes.length) {
+                resultado.push(faltantes.shift().hex);
+            }
+        }
+
+        return resultado.slice(0, limite);
     }
 
     // ── Detecta cor de fundo amostrando pixels da borda da imagem ────────────
@@ -4907,6 +4956,66 @@ window.addEventListener('load', () => {
         return src;
     }
 
+    function fundirComponentesPequenosRotulos(labels, width, height, numCores, minArea = 12, minAreaTransparente = 20, passes = 1) {
+        let src = new Int16Array(labels);
+        const total = width * height;
+
+        for (let pass = 0; pass < passes; pass++) {
+            const visited = new Uint8Array(total);
+            for (let start = 0; start < total; start++) {
+                if (visited[start]) continue;
+                const labelAtual = src[start];
+                const fila = [start];
+                const componente = [];
+                const vizinhos = new Int16Array(numCores);
+                visited[start] = 1;
+                let tocaBorda = false;
+
+                for (let qi = 0; qi < fila.length; qi++) {
+                    const idx = fila[qi];
+                    componente.push(idx);
+                    const x = idx % width;
+                    const y = (idx / width) | 0;
+                    if (x === 0 || y === 0 || x === width - 1 || y === height - 1) tocaBorda = true;
+
+                    const checarVizinho = (nIdx) => {
+                        const nLabel = src[nIdx];
+                        if (nLabel === labelAtual) {
+                            if (!visited[nIdx]) {
+                                visited[nIdx] = 1;
+                                fila.push(nIdx);
+                            }
+                            return;
+                        }
+                        if (nLabel >= 0) vizinhos[nLabel]++;
+                    };
+
+                    if (x > 0) checarVizinho(idx - 1);
+                    if (x < width - 1) checarVizinho(idx + 1);
+                    if (y > 0) checarVizinho(idx - width);
+                    if (y < height - 1) checarVizinho(idx + width);
+                }
+
+                const limite = labelAtual < 0 ? minAreaTransparente : minArea;
+                if ((labelAtual >= 0 || !tocaBorda) && componente.length <= limite) {
+                    let melhorLabel = -1;
+                    let melhorScore = 0;
+                    for (let c = 0; c < numCores; c++) {
+                        if (vizinhos[c] > melhorScore) {
+                            melhorScore = vizinhos[c];
+                            melhorLabel = c;
+                        }
+                    }
+                    if (melhorLabel >= 0) {
+                        componente.forEach((idx) => { src[idx] = melhorLabel; });
+                    }
+                }
+            }
+        }
+
+        return src;
+    }
+
     function quantizarImageDataParaPaleta(imageData, paleta, corFundo = null, passesSuavizacao = 2) {
         const width = imageData.width;
         const height = imageData.height;
@@ -4938,6 +5047,7 @@ window.addEventListener('load', () => {
             labels[px] = melhor;
         }
 
+        const areaMinimaComponente = clampNum(Math.round((width * height) * 0.00002), 14, 72);
         const labelsSuaves = preencherMicroFalhasPaleta(
             suavizarRotulosPaleta(labels, width, height, paletaRgb.length, passesSuavizacao),
             width,
@@ -4945,9 +5055,24 @@ window.addEventListener('load', () => {
             paletaRgb.length,
             Math.max(1, passesSuavizacao - 1)
         );
+        const labelsRefinados = preencherMicroFalhasPaleta(
+            fundirComponentesPequenosRotulos(
+                labelsSuaves,
+                width,
+                height,
+                paletaRgb.length,
+                areaMinimaComponente,
+                Math.round(areaMinimaComponente * 2.2),
+                1
+            ),
+            width,
+            height,
+            paletaRgb.length,
+            1
+        );
 
-        for (let px = 0, i = 0; px < labelsSuaves.length; px++, i += 4) {
-            const label = labelsSuaves[px];
+        for (let px = 0, i = 0; px < labelsRefinados.length; px++, i += 4) {
+            const label = labelsRefinados[px];
             if (label < 0) {
                 out[i + 3] = 0;
                 continue;
@@ -4961,7 +5086,7 @@ window.addEventListener('load', () => {
 
         return {
             imageData: new ImageData(out, width, height),
-            labels: labelsSuaves,
+            labels: labelsRefinados,
             paletaRgb,
         };
     }
@@ -4980,9 +5105,10 @@ window.addEventListener('load', () => {
         svgEl.setAttribute('fill-rule', 'evenodd');
 
         const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
-        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.58, 0.18, 0.72);
-        const minArea = 8;
-        const minHoleArea = 18;
+        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.72, 0.24, 0.9);
+        const areaBase = clampNum(Math.round((width * height) * 0.000025), 16, 110);
+        const minArea = paleta.length >= 7 ? Math.round(areaBase * 1.2) : areaBase;
+        const minHoleArea = Math.max(24, Math.round(minArea * 1.65));
 
         const lerHierarquia = (hierData, idx, offset) => (hierData && idx >= 0 ? hierData[idx * 4 + offset] : -1);
         const extrairPathIndice = (contours, idx, areaMinima) => {
@@ -5013,7 +5139,9 @@ window.addEventListener('load', () => {
                 if (labels[i] === corIdx) mask.data[i] = 255;
             }
 
+            cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
             cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+            cv.medianBlur(mask, mask, 3);
 
             const contours = new cv.MatVector();
             const hierarchy = new cv.Mat();
