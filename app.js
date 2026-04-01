@@ -4181,21 +4181,35 @@ window.addEventListener('load', () => {
         if (!Array.isArray(cores) || !cores.length) return ['#000000'];
         const tipo = contexto.tipo || 'desenho';
         const saturacao = contexto.saturacao || 0;
-        const limite = tipo === 'lineart' ? 4 : (saturacao > 0.48 ? 10 : 8);
-        const distanciaMin = tipo === 'lineart' ? 42 : (saturacao > 0.48 ? 32 : 38);
+        const limite = tipo === 'lineart' ? 4 : (saturacao > 0.48 ? 7 : 6);
+        const distanciaMin = tipo === 'lineart' ? 42 : (saturacao > 0.48 ? 36 : 44);
         const resultado = [];
 
-        for (const hex of cores) {
+        cores.forEach((hex, idx) => {
+            if (resultado.length >= limite) return;
             const corAtual = hexToRgb(hex);
+            const lumAtual = luminanciaRgb(corAtual);
+            const satAtual = saturacaoRgb(corAtual);
+
+            if (
+                tipo === 'desenho' &&
+                saturacao > 0.22 &&
+                idx >= 2 &&
+                lumAtual < 58 &&
+                satAtual < 0.18
+            ) {
+                return;
+            }
+
             const redundante = resultado.some((keepHex) => {
                 const keepRgb = hexToRgb(keepHex);
                 const dist = corDistRgb(corAtual, keepRgb);
                 const lumDelta = Math.abs(luminanciaRgb(corAtual) - luminanciaRgb(keepRgb));
-                return dist < distanciaMin || (dist < distanciaMin * 1.28 && lumDelta < 18);
+                return dist < distanciaMin || (dist < distanciaMin * 1.25 && lumDelta < 22);
             });
+
             if (!redundante) resultado.push(hex.toLowerCase());
-            if (resultado.length >= limite) break;
-        }
+        });
 
         const minimoVariedade = Math.min(tipo === 'lineart' ? 2 : 4, cores.length, limite);
         if (resultado.length < minimoVariedade) {
@@ -4614,6 +4628,12 @@ window.addEventListener('load', () => {
 
     function luminanciaRgb(rgb) {
         return 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b;
+    }
+
+    function saturacaoRgb(rgb) {
+        const max = Math.max(rgb.r, rgb.g, rgb.b);
+        const min = Math.min(rgb.r, rgb.g, rgb.b);
+        return max === 0 ? 0 : (max - min) / max;
     }
 
     function escurecerHex(hex, fator = 0.6) {
@@ -5105,16 +5125,22 @@ window.addEventListener('load', () => {
         svgEl.setAttribute('fill-rule', 'evenodd');
 
         const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
-        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.72, 0.24, 0.9);
-        const areaBase = clampNum(Math.round((width * height) * 0.000025), 16, 110);
-        const minArea = paleta.length >= 7 ? Math.round(areaBase * 1.2) : areaBase;
-        const minHoleArea = Math.max(24, Math.round(minArea * 1.65));
+        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.9, 0.34, 1.15);
+        const areaBase = clampNum(Math.round((width * height) * 0.00003), 20, 140);
+        const minArea = paleta.length >= 6 ? Math.round(areaBase * 1.3) : areaBase;
+        const minHoleArea = Math.max(30, Math.round(minArea * 1.85));
 
         const lerHierarquia = (hierData, idx, offset) => (hierData && idx >= 0 ? hierData[idx * 4 + offset] : -1);
         const extrairPathIndice = (contours, idx, areaMinima) => {
             const contour = contours.get(idx);
             try {
-                if (Math.abs(cv.contourArea(contour)) < areaMinima) return '';
+                const area = Math.abs(cv.contourArea(contour));
+                if (area < areaMinima) return '';
+                const rect = cv.boundingRect(contour);
+                const menorLado = Math.min(rect.width, rect.height);
+                const maiorLado = Math.max(rect.width, rect.height);
+                if (menorLado <= 2 && area < areaMinima * 8) return '';
+                if (menorLado <= 3 && maiorLado < 18) return '';
                 const approx = new cv.Mat();
                 try {
                     cv.approxPolyDP(contour, approx, epsilon, true);
