@@ -757,6 +757,15 @@ window.addEventListener('load', () => {
         return d;
     }
 
+    function pontosParaPathLinearFechado(pts) {
+        if (!pts || pts.length < 3) return '';
+        let d = `M${pts[0].x} ${pts[0].y}`;
+        for (let i = 1; i < pts.length; i++) {
+            d += ` L${pts[i].x} ${pts[i].y}`;
+        }
+        return d + ' Z';
+    }
+
     // Garante filtro blur no livreLayer defs
     function garantirFiltroBlur(id, desvio) {
         let defs = livreLayer.querySelector('defs');
@@ -4961,19 +4970,41 @@ window.addEventListener('load', () => {
         const cv = window.cv;
         const width = imgData.width;
         const height = imgData.height;
-        const { labels } = quantizarImageDataParaPaleta(imgData, paleta, window._corFundo, 2);
+        const { labels } = quantizarImageDataParaPaleta(imgData, paleta, window._corFundo, 3);
         const ns = 'http://www.w3.org/2000/svg';
         const svgEl = document.createElementNS(ns, 'svg');
         svgEl.setAttribute('width', width);
         svgEl.setAttribute('height', height);
         svgEl.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
         svgEl.setAttribute('shape-rendering', 'geometricPrecision');
-        svgEl.setAttribute('fill-rule', 'nonzero');
+        svgEl.setAttribute('fill-rule', 'evenodd');
 
-        const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.82, 0.5, 1.45);
-        const strokeFill = Math.max(0.7, larguraTraco * 0.18);
-        const minArea = 5;
+        const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
+        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.58, 0.18, 0.72);
+        const minArea = 8;
+        const minHoleArea = 18;
+
+        const lerHierarquia = (hierData, idx, offset) => (hierData && idx >= 0 ? hierData[idx * 4 + offset] : -1);
+        const extrairPathIndice = (contours, idx, areaMinima) => {
+            const contour = contours.get(idx);
+            try {
+                if (Math.abs(cv.contourArea(contour)) < areaMinima) return '';
+                const approx = new cv.Mat();
+                try {
+                    cv.approxPolyDP(contour, approx, epsilon, true);
+                    const srcPts = approx.data32S.length ? approx.data32S : contour.data32S;
+                    const points = [];
+                    for (let j = 0; j < srcPts.length; j += 2) {
+                        points.push({ x: srcPts[j], y: srcPts[j + 1] });
+                    }
+                    return pontosParaPathLinearFechado(points);
+                } finally {
+                    approx.delete();
+                }
+            } finally {
+                contour.delete();
+            }
+        };
 
         for (let corIdx = 0; corIdx < paleta.length; corIdx++) {
             const mask = new cv.Mat(height, width, cv.CV_8UC1);
@@ -4983,39 +5014,28 @@ window.addEventListener('load', () => {
             }
 
             cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
-            cv.medianBlur(mask, mask, 3);
-            cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
 
             const contours = new cv.MatVector();
             const hierarchy = new cv.Mat();
-            cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE);
+            cv.findContours(mask, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
+            const hierData = hierarchy.data32S;
 
             for (let i = 0; i < contours.size(); i++) {
-                const contour = contours.get(i);
-                if (cv.contourArea(contour) < minArea) {
-                    contour.delete();
-                    continue;
+                if (lerHierarquia(hierData, i, 3) !== -1) continue;
+                let d = extrairPathIndice(contours, i, minArea);
+                if (!d) continue;
+
+                for (let child = lerHierarquia(hierData, i, 2); child !== -1; child = lerHierarquia(hierData, child, 0)) {
+                    const holePath = extrairPathIndice(contours, child, minHoleArea);
+                    if (holePath) d += ' ' + holePath;
                 }
-                const approx = new cv.Mat();
-                cv.approxPolyDP(contour, approx, epsilon, true);
-                const srcPts = approx.data32S.length ? approx.data32S : contour.data32S;
-                const points = [];
-                for (let j = 0; j < srcPts.length; j += 2) {
-                    points.push({ x: srcPts[j], y: srcPts[j + 1] });
-                }
-                if (points.length >= 3) {
-                    const path = document.createElementNS(ns, 'path');
-                    path.setAttribute('d', pontosParaPath(points) + ' Z');
-                    path.setAttribute('fill', paleta[corIdx]);
-                    path.setAttribute('stroke', paleta[corIdx]);
-                    path.setAttribute('stroke-width', strokeFill);
-                    path.setAttribute('stroke-linecap', 'round');
-                    path.setAttribute('stroke-linejoin', 'round');
-                    path.setAttribute('paint-order', 'stroke fill');
-                    svgEl.appendChild(path);
-                }
-                approx.delete();
-                contour.delete();
+
+                const path = document.createElementNS(ns, 'path');
+                path.setAttribute('d', d);
+                path.setAttribute('fill', paleta[corIdx]);
+                path.setAttribute('stroke', 'none');
+                path.setAttribute('fill-rule', 'evenodd');
+                svgEl.appendChild(path);
             }
 
             mask.delete();
@@ -5029,7 +5049,7 @@ window.addEventListener('load', () => {
             const outlineGroup = gerarGrupoContornoEscuro(
                 window.imgParaVetor,
                 corContornoBase || '#1a1a1a',
-                Math.max(0.75, larguraTraco * 0.42),
+                Math.max(0.75, larguraTraco * 0.36),
                 sensibilidade,
                 analiseAtual
             );
@@ -5400,15 +5420,9 @@ window.addEventListener('load', () => {
                             window._corFundo
                         ) || corPreenchimento || coresUsuarioFinal[0];
                     }
-
-                    const corStroke = corPreenchimento;
-                    const larguraStroke = aplicarContorno
-                        ? Math.max(0.28, larguraTraco * 0.1)
-                        : Math.max(0.55, larguraTraco * 0.24);
-
                     path.setAttribute('fill', corPreenchimento);
-                    path.setAttribute('stroke', corStroke);
-                    path.setAttribute('stroke-width', larguraStroke);
+                    path.setAttribute('stroke', 'none');
+                    path.removeAttribute('stroke-width');
                 });
 
                 if (aplicarContorno && svgRoot) {
