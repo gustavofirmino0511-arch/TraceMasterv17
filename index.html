@@ -426,8 +426,8 @@
             <div class="manual-secao-titulo">📷 Importar & Vetorizar Foto</div>
 
             <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">📷</span><span class="manual-card-nome">Importar Foto</span></div><p class="manual-desc">Toque em COR → ícone 📷 ou no menu PROJETO → FOTO. Escolha uma imagem da galeria.</p></div>
-            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">✨</span><span class="manual-card-nome">Auto Vetorizar</span></div><p class="manual-desc">O app analisa a imagem e configura automaticamente o contraste, brilho e número de cores para o melhor resultado.</p></div>
-            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">🎨</span><span class="manual-card-nome">Nº de Cores</span></div><p class="manual-desc">Escolha 1, 2 ou 3 cores para a vetorização. 1 cor = só contorno preto. Mais cores = mais detalhes.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">🧠</span><span class="manual-card-nome">Guia Inteligente</span></div><p class="manual-desc">O app sugere paleta, fundo e guia de contorno para você ajustar manualmente antes de vetorizar.</p></div>
+            <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">🎨</span><span class="manual-card-nome">Paleta Manual</span></div><p class="manual-desc">A paleta detectada já vem marcada. Toque nas bolinhas para remover ou recolocar cores antes de vetorizar.</p></div>
             <div class="manual-card"><div class="manual-card-header"><span class="manual-icon">⚙️</span><span class="manual-card-nome">Ajustes</span></div><p class="manual-desc"><b>Contraste:</b> aumenta a diferença entre claro e escuro.<br><b>Brilho:</b> clareia ou escurece a imagem antes de vetorizar.<br><b>Suavizar:</b> reduz ruídos e detalhes finos.<br><b>Ruído:</b> remove pequenos fragmentos do vetor final.</p></div>
             <div class="manual-dica">💡 Para lineart (desenho em papel), use 1 cor preta com contraste alto e suavizar baixo</div>
         </div>
@@ -474,10 +474,10 @@
         <!-- Pré-visualização -->
         <canvas id="preview-canvas" style="width:100%;border-radius:8px;border:1px solid #444;margin-bottom:12px;max-height:160px;object-fit:contain;background:#111;"></canvas>
 
-        <!-- Cores auto-detectadas — sem seletor manual -->
+        <!-- Paleta sugerida para ajuste manual -->
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-            <span style="font-size:10px;color:#888;min-width:60px;">CORES</span>
-            <span id="tm-cores-auto-count" style="font-size:11px;color:#03dac6;font-weight:800;">— clique em AUTO VETORIZAR</span>
+            <span style="font-size:10px;color:#888;min-width:60px;">PALETA</span>
+            <span id="tm-cores-auto-count" style="font-size:11px;color:#03dac6;font-weight:800;">— selecione as cores que devem entrar no vetor</span>
         </div>
 
         <!-- Fundo detectado automaticamente -->
@@ -522,14 +522,25 @@
         </div>
 
         <!-- Limpeza de ruído -->
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
             <span style="font-size:10px;color:#888;min-width:60px;">RUÍDO</span>
             <input type="range" id="pre-pathomit" min="4" max="64" value="16" style="flex:1;accent-color:#03dac6;">
             <span id="pre-pathomit-val" style="font-size:9px;color:#03dac6;min-width:28px;">16</span>
         </div>
 
+        <div class="tm-assist-row">
+            <label class="tm-assist-toggle">
+                <input type="checkbox" id="tm-guia-contorno" checked>
+                Guia inteligente
+            </label>
+            <label class="tm-assist-toggle">
+                <input type="checkbox" id="tm-aplicar-contorno">
+                Contorno detectado
+            </label>
+        </div>
+        <div class="tm-assist-hint">A guia só ajuda no ajuste manual. O contorno só entra no SVG se você marcar.</div>
+
         <div style="display:flex;gap:8px;">
-            <button id="btn-auto-vetor" onclick="autoVetorizar()">✨ AUTO VETORIZAR</button>
             <button id="btn-vetorizar-modal" style="flex:1;padding:11px;background:linear-gradient(135deg,#03dac6,#00a896);color:#000;border:none;border-radius:8px;font-weight:800;font-size:13px;">🚀 VETORIZAR</button>
             <button onclick="document.getElementById('modal').style.display='none'" style="padding:11px 14px;background:#333;color:#aaa;border:none;border-radius:8px;font-size:12px;">✕</button>
         </div>
@@ -768,16 +779,6 @@
     <div class="tm-loader-msg" id="tm-loader-msg">Processando...</div>
     <div class="tm-loader-bar-wrap">
         <div class="tm-loader-bar" id="tm-loader-bar"></div>
-    </div>
-</div>
-
-<!-- ══ SUGESTÃO INTELIGENTE ══ -->
-<div id="tm-sugestao">
-    <div class="tm-sug-titulo" id="tm-sug-titulo">💡 Sugestão</div>
-    <div class="tm-sug-texto" id="tm-sug-texto"></div>
-    <div class="tm-sug-btns">
-        <button class="tm-sug-sim" id="tm-sug-sim">✓ Aplicar</button>
-        <button class="tm-sug-nao" id="tm-sug-nao">✕ Ignorar</button>
     </div>
 </div>
 

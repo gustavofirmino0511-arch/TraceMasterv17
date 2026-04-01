@@ -3820,16 +3820,112 @@ window.addEventListener('load', () => {
         });
     });
 
+    window._guiaVetorizacaoCache = null;
+
+    function limparCacheGuiaVetorizacao() {
+        window._guiaVetorizacaoCache = null;
+    }
+
+    function gerarGuiaVetorizacao(img, width, height) {
+        if (!img || width <= 0 || height <= 0) return null;
+        const key = [img.currentSrc || img.src || 'img', width, height].join('|');
+        if (window._guiaVetorizacaoCache?.key === key) return window._guiaVetorizacaoCache.canvas;
+
+        const overlay = document.createElement('canvas');
+        overlay.width = width;
+        overlay.height = height;
+        const octx = overlay.getContext('2d');
+        if (!octx) return null;
+
+        const base = document.createElement('canvas');
+        base.width = width;
+        base.height = height;
+        const bctx = base.getContext('2d');
+        if (!bctx) return null;
+        bctx.drawImage(img, 0, 0, width, height);
+
+        if (window._cvReady && window.cv && window.cv.imread) {
+            const cv = window.cv;
+            const src = cv.imread(base);
+            const gray = new cv.Mat();
+            const blur = new cv.Mat();
+            const edges = new cv.Mat();
+            const dark = new cv.Mat();
+            const guided = new cv.Mat();
+            const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
+
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(gray, blur, new cv.Size(3, 3), 0.8);
+            cv.Canny(blur, edges, 36, 108);
+            cv.threshold(gray, dark, 168, 255, cv.THRESH_BINARY_INV);
+            cv.bitwise_and(edges, dark, guided);
+            cv.dilate(guided, guided, kernel);
+
+            const rgba = new Uint8ClampedArray(width * height * 4);
+            for (let i = 0, px = 0; i < guided.data.length; i++, px += 4) {
+                const v = guided.data[i];
+                if (!v) continue;
+                rgba[px] = 3;
+                rgba[px + 1] = 218;
+                rgba[px + 2] = 198;
+                rgba[px + 3] = Math.min(210, 80 + v);
+            }
+            octx.putImageData(new ImageData(rgba, width, height), 0, 0);
+
+            src.delete();
+            gray.delete();
+            blur.delete();
+            edges.delete();
+            dark.delete();
+            guided.delete();
+            kernel.delete();
+        } else {
+            const srcData = bctx.getImageData(0, 0, width, height);
+            const out = octx.createImageData(width, height);
+            const data = srcData.data;
+            const outData = out.data;
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = (y * width + x) * 4;
+                    const lum = data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114;
+                    const lumR = data[idx + 4] * 0.299 + data[idx + 5] * 0.587 + data[idx + 6] * 0.114;
+                    const lumB = data[idx + width * 4] * 0.299 + data[idx + width * 4 + 1] * 0.587 + data[idx + width * 4 + 2] * 0.114;
+                    const grad = Math.abs(lum - lumR) + Math.abs(lum - lumB);
+                    if (grad < 42 || lum > 200) continue;
+                    outData[idx] = 3;
+                    outData[idx + 1] = 218;
+                    outData[idx + 2] = 198;
+                    outData[idx + 3] = 150;
+                }
+            }
+            octx.putImageData(out, 0, 0);
+        }
+
+        window._guiaVetorizacaoCache = { key, canvas: overlay };
+        return overlay;
+    }
+
     window.atualizarPreviewVetor = () => {
         if (!window.imgParaVetor || !previewCanvas || !previewCtx) return;
         const contraste = document.getElementById('pre-contraste')?.value || 150;
         const brilho    = document.getElementById('pre-brilho')?.value || 100;
         const blur      = document.getElementById('pre-blur')?.value || 1;
+        const mostrarGuia = document.getElementById('tm-guia-contorno')?.checked !== false;
         previewCanvas.width  = window.imgParaVetor.width;
         previewCanvas.height = window.imgParaVetor.height;
+        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
         previewCtx.filter = `contrast(${contraste}%) brightness(${brilho}%) blur(${blur}px)`;
         previewCtx.drawImage(window.imgParaVetor, 0, 0);
         previewCtx.filter = 'none';
+        if (mostrarGuia) {
+            const guia = gerarGuiaVetorizacao(window.imgParaVetor, previewCanvas.width, previewCanvas.height);
+            if (guia) {
+                previewCtx.save();
+                previewCtx.globalAlpha = 0.92;
+                previewCtx.drawImage(guia, 0, 0);
+                previewCtx.restore();
+            }
+        }
     };
 
     function obterSensibilidadeVetorizacao() {
@@ -3881,33 +3977,6 @@ window.addEventListener('load', () => {
         tmLoaderBar.style.width = '100%';
         setTimeout(() => tmLoader.classList.remove('ativo'), 300);
     }
-
-    // ── Sugestão inteligente ─────────────────────────────────────────────────
-    // Exibe um card de sugestão contextual com callback de confirmação
-    let _sugCallback = null, _sugTimer = null;
-
-    function mostrarSugestao(titulo, texto, onSim) {
-        const el  = document.getElementById('tm-sugestao');
-        const tit = document.getElementById('tm-sug-titulo');
-        const txt = document.getElementById('tm-sug-texto');
-        if (!el) return;
-        clearTimeout(_sugTimer);
-        tit.textContent = '💡 ' + titulo;
-        txt.textContent = texto;
-        _sugCallback = onSim;
-        el.classList.add('visivel');
-        // Auto-esconder após 8 segundos
-        _sugTimer = setTimeout(() => el.classList.remove('visivel'), 8000);
-    }
-
-    document.getElementById('tm-sug-sim')?.addEventListener('click', () => {
-        document.getElementById('tm-sugestao')?.classList.remove('visivel');
-        if (_sugCallback) { _sugCallback(); _sugCallback = null; }
-    });
-    document.getElementById('tm-sug-nao')?.addEventListener('click', () => {
-        document.getElementById('tm-sugestao')?.classList.remove('visivel');
-        _sugCallback = null;
-    });
 
     // ── Ripple effect nos botões ─────────────────────────────────────────────
     // Adiciona efeito de onda ao clicar/tocar em qualquer botão
@@ -4126,121 +4195,6 @@ window.addEventListener('load', () => {
         const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
         return { r, g, b, hex };
     }
-
-    // ── autoVetorizar: configura e dispara vetorização inteligente ─────────
-    // Analisa a imagem, ajusta todos os parâmetros do modal e inicia vetorização
-    window.autoVetorizar = () => {
-        const img = window.imgParaVetor;
-        if (!img) { mostrarNotificacao('⚠️ Carregue uma foto primeiro!'); return; }
-
-        mostrarLoader('🔍 Analisando imagem...');
-
-        // Usa setTimeout para liberar o frame e mostrar o loader antes de processar
-        setTimeout(() => {
-            try {
-                const analise = analisarImagem(img);
-                window._analiseVetorAtual = analise;
-                esconderLoader();
-
-                // Atualiza tag de tipo visual no modal
-                const tagEl = document.getElementById('tm-tipo-img-tag');
-                if (tagEl) {
-                    const mapaTipo = {
-                        foto:    { cls: 'tm-tag-foto',    txt: '📷 Foto'    },
-                        desenho: { cls: 'tm-tag-desenho', txt: '🖼 Desenho' },
-                        lineart: { cls: 'tm-tag-lineart', txt: '✏️ Lineart' },
-                    };
-                    const info = mapaTipo[analise.tipo];
-                    tagEl.className = 'tm-tag-tipo-img ' + info.cls;
-                    tagEl.textContent = info.txt;
-                    tagEl.style.display = 'inline-block';
-                }
-
-                // Mostra paleta de cores detectadas
-                _mostrarPaletaModal(analise.coresDom);
-
-                // ────────────────────────────────────────────────────────────
-                // Decisões de configuração baseadas no tipo detectado:
-                //
-                //  LINEART  → alto contraste, sem blur, ruído baixo, 1 cor
-                //  DESENHO  → contraste médio, blur leve, 2–3 cores
-                //  FOTO     → contraste alto, blur moderado, 3 cores
-                // ────────────────────────────────────────────────────────────
-                let contraste, brilho, blur, pathomit;
-                const ilustracaoColorida = analise.tipo === 'desenho' &&
-                    (analise.coloridaComOutline || analise.nCoresDom >= 6);
-
-                if (analise.tipo === 'lineart') {
-                    contraste = 250; brilho = 110; blur = 0; pathomit = 5;
-                } else if (ilustracaoColorida) {
-                    // Preset conservador: aproxima o resultado do botão manual,
-                    // que preserva melhor volumes internos em ilustrações coloridas.
-                    contraste = 150; brilho = 100; blur = 1; pathomit = 16;
-                } else if (analise.tipo === 'desenho') {
-                    contraste = 175; brilho = 101; blur = 0.5; pathomit = 10;
-                } else {
-                    // foto: reforça contraste para separar silhueta do fundo
-                    contraste = 185; brilho = 98; blur = 0.8; pathomit = 8;
-                }
-
-                // Aplica valores nos sliders
-                _setSlider('pre-contraste', contraste, '%');
-                _setSlider('pre-brilho',    brilho,    '%');
-                _setSlider('pre-blur',      blur,      'px');
-                _setSlider('pre-pathomit',  pathomit,  '');
-
-                // ── Paleta completa auto-detectada ──────────────────────────
-                // _mostrarPaletaModal já define window._paletaDetectada com todas as cores
-                const nCores = analise.coresDom.length;
-                const countEl = document.getElementById('tm-cores-auto-count');
-                if (countEl) {
-                    countEl.textContent = '✅ ' + nCores + ' cor' + (nCores !== 1 ? 'es' : '') +
-                        ' selecionada' + (nCores !== 1 ? 's' : '') + ' automaticamente';
-                    countEl.style.color = '#03dac6';
-                }
-
-                // Compat: preenche inputs ocultos até 3 para o fallback manual
-                if (analise.coresDom.length > 0) {
-                    const ids = ['modal-color','modal-color2','modal-color3'];
-                    analise.coresDom.slice(0, 3).forEach((c, i) => {
-                        const el = document.getElementById(ids[i]);
-                        if (el) el.value = c;
-                    });
-                }
-
-                // ── Detecta e exibe cor de fundo ────────────────────────────
-                const corFundo = _detectarCorFundo(img);
-                window._corFundo = corFundo;
-                const fundoWrap  = document.getElementById('tm-fundo-wrap');
-                const fundoCor   = document.getElementById('tm-fundo-cor');
-                const fundoLabel = document.getElementById('tm-fundo-label');
-                if (corFundo && fundoWrap) {
-                    fundoCor.style.background = corFundo.hex;
-                    fundoLabel.textContent = corFundo.hex + ' (borda da imagem)';
-                    fundoWrap.style.display = 'flex';
-                } else if (fundoWrap) {
-                    fundoWrap.style.display = 'none';
-                }
-
-                // Atualiza preview
-                atualizarPreviewVetor();
-
-                // Sugestão contextual pós-análise
-                const msgsSug = {
-                    lineart: { t: 'Lineart detectada',  m: `Configuramos para traço com ${nCores} cor${nCores!==1?'es':''}. Deseja vetorizar agora?` },
-                    desenho: { t: 'Desenho detectado',  m: `Detectamos ${nCores} cor${nCores!==1?'es':''} no desenho. Vetorizar agora?` },
-                    foto:    { t: 'Foto detectada',      m: `Detectamos ${nCores} cor${nCores!==1?'es':''} na imagem. Vetorize ou ajuste se necessário.` },
-                };
-                const sug = msgsSug[analise.tipo];
-                mostrarSugestao(sug.t, sug.m, () => confirmarCor());
-
-            } catch(err) {
-                esconderLoader();
-                console.error('Erro na análise:', err);
-                mostrarNotificacao('❌ Erro na análise automática');
-            }
-        }, 80);
-    };
 
     // ── Aux: atualiza slider + label ─────────────────────────────────────
     function _setSlider(id, val, sufixo) {
@@ -4900,6 +4854,50 @@ window.addEventListener('load', () => {
         return src;
     }
 
+    function preencherMicroFalhasPaleta(labels, width, height, numCores, passes = 2) {
+        let src = labels;
+        for (let pass = 0; pass < passes; pass++) {
+            const dst = new Int16Array(src);
+            const counts = new Int16Array(numCores);
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = y * width + x;
+                    counts.fill(0);
+                    for (let oy = -1; oy <= 1; oy++) {
+                        for (let ox = -1; ox <= 1; ox++) {
+                            if (ox === 0 && oy === 0) continue;
+                            const viz = src[idx + oy * width + ox];
+                            if (viz >= 0) counts[viz]++;
+                        }
+                    }
+
+                    let melhorLabel = -1;
+                    let melhorCount = 0;
+                    for (let c = 0; c < numCores; c++) {
+                        if (counts[c] > melhorCount) {
+                            melhorCount = counts[c];
+                            melhorLabel = c;
+                        }
+                    }
+
+                    const atual = src[idx];
+                    if (atual < 0) {
+                        if (melhorLabel >= 0 && melhorCount >= 6) dst[idx] = melhorLabel;
+                        continue;
+                    }
+
+                    if (melhorLabel >= 0 && melhorLabel !== atual && melhorCount >= 7 && (counts[atual] || 0) <= 1) {
+                        dst[idx] = melhorLabel;
+                    }
+                }
+            }
+
+            src = dst;
+        }
+        return src;
+    }
+
     function quantizarImageDataParaPaleta(imageData, paleta, corFundo = null, passesSuavizacao = 2) {
         const width = imageData.width;
         const height = imageData.height;
@@ -4931,7 +4929,13 @@ window.addEventListener('load', () => {
             labels[px] = melhor;
         }
 
-        const labelsSuaves = suavizarRotulosPaleta(labels, width, height, paletaRgb.length, passesSuavizacao);
+        const labelsSuaves = preencherMicroFalhasPaleta(
+            suavizarRotulosPaleta(labels, width, height, paletaRgb.length, passesSuavizacao),
+            width,
+            height,
+            paletaRgb.length,
+            Math.max(1, passesSuavizacao - 1)
+        );
 
         for (let px = 0, i = 0; px < labelsSuaves.length; px++, i += 4) {
             const label = labelsSuaves[px];
@@ -4967,9 +4971,9 @@ window.addEventListener('load', () => {
         svgEl.setAttribute('fill-rule', 'nonzero');
 
         const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.85, 0.6, 1.6);
-        const strokeFill = Math.max(0.45, larguraTraco * 0.12);
-        const minArea = 6;
+        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.82, 0.5, 1.45);
+        const strokeFill = Math.max(0.7, larguraTraco * 0.18);
+        const minArea = 5;
 
         for (let corIdx = 0; corIdx < paleta.length; corIdx++) {
             const mask = new cv.Mat(height, width, cv.CV_8UC1);
@@ -4978,6 +4982,8 @@ window.addEventListener('load', () => {
                 if (labels[i] === corIdx) mask.data[i] = 255;
             }
 
+            cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+            cv.medianBlur(mask, mask, 3);
             cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
 
             const contours = new cv.MatVector();
@@ -5005,6 +5011,7 @@ window.addEventListener('load', () => {
                     path.setAttribute('stroke-width', strokeFill);
                     path.setAttribute('stroke-linecap', 'round');
                     path.setAttribute('stroke-linejoin', 'round');
+                    path.setAttribute('paint-order', 'stroke fill');
                     svgEl.appendChild(path);
                 }
                 approx.delete();
@@ -5119,8 +5126,9 @@ window.addEventListener('load', () => {
         const larguraTraco = parseFloat(document.getElementById('brush-size')?.value) || 2;
         const pathomitBase = parseInt(document.getElementById('pre-pathomit')?.value || 16, 10);
         const cfgSens = obterConfigSensibilidade(sensibilidade, pathomitBase, usarMultiCor);
-        const corContornoBase = detectarCorContorno(window.imgParaVetor, analiseAtual);
-        const aplicarContorno = usarMultiCor && deveAplicarContorno(analiseAtual, corContornoBase);
+        const usarContornoAssistido = !!document.getElementById('tm-aplicar-contorno')?.checked;
+        const corContornoBase = usarContornoAssistido ? detectarCorContorno(window.imgParaVetor, analiseAtual) : null;
+        const aplicarContorno = !!(usarMultiCor && usarContornoAssistido && deveAplicarContorno(analiseAtual, corContornoBase));
 
         if (window._cvReady && window.cv && !usarMultiCor) {
             document.getElementById('modal').style.display = 'none';
@@ -5395,8 +5403,8 @@ window.addEventListener('load', () => {
 
                     const corStroke = corPreenchimento;
                     const larguraStroke = aplicarContorno
-                        ? Math.max(0.22, larguraTraco * 0.08)
-                        : Math.max(0.35, larguraTraco * 0.18);
+                        ? Math.max(0.28, larguraTraco * 0.1)
+                        : Math.max(0.55, larguraTraco * 0.24);
 
                     path.setAttribute('fill', corPreenchimento);
                     path.setAttribute('stroke', corStroke);
@@ -5484,13 +5492,28 @@ window.addEventListener('load', () => {
                                 _mostrarPaletaModal(a.coresDom);
                                 window._paletaDetectada = a.coresDom;
                                 const countEl2 = document.getElementById('tm-cores-auto-count');
-                                if (countEl2) countEl2.textContent = a.coresDom.length + ' cor' + (a.coresDom.length !== 1 ? 'es' : '') + ' (auto)';
-                                const msgs = {
-                                    lineart: 'Detectamos um lineart real. "Auto Vetorizar" vai manter o traço mais limpo.',
-                                    desenho: 'Detectamos uma ilustração/desenho. O modo automático vai preservar mais cores e reduzir a simplificação.',
-                                    foto:    'Imagem fotográfica detectada. "Auto Vetorizar" ajusta tudo pra você!',
-                                };
-                                mostrarSugestao('Imagem analisada!', msgs[a.tipo], () => autoVetorizar());
+                                if (countEl2) countEl2.textContent = 'Paleta sugerida: ' + a.coresDom.length + ' cor' + (a.coresDom.length !== 1 ? 'es' : '');
+
+                                const corFundo = _detectarCorFundo(imgAnl);
+                                window._corFundo = corFundo;
+                                const fundoWrap  = document.getElementById('tm-fundo-wrap');
+                                const fundoCor   = document.getElementById('tm-fundo-cor');
+                                const fundoLabel = document.getElementById('tm-fundo-label');
+                                const removerFundo = document.getElementById('tm-remover-fundo');
+                                if (corFundo && fundoWrap && fundoCor && fundoLabel) {
+                                    fundoCor.style.background = corFundo.hex;
+                                    fundoLabel.textContent = corFundo.hex + ' detectado na borda';
+                                    fundoWrap.style.display = 'flex';
+                                    if (removerFundo && typeof removerFundo.checked === 'boolean') removerFundo.checked = true;
+                                } else if (fundoWrap) {
+                                    fundoWrap.style.display = 'none';
+                                    if (removerFundo && typeof removerFundo.checked === 'boolean') removerFundo.checked = false;
+                                }
+
+                                const chkContorno = document.getElementById('tm-aplicar-contorno');
+                                if (chkContorno) chkContorno.checked = a.tipo === 'lineart';
+                                limparCacheGuiaVetorizacao();
+                                atualizarPreviewVetor();
                             } catch(_) {}
                         };
                         if (window.requestIdleCallback) requestIdleCallback(_analisar);
@@ -5504,6 +5527,10 @@ window.addEventListener('load', () => {
     }
 
     // ── Override confirmarCor: adiciona loader e autoClean ───────────────
+    document.getElementById('tm-guia-contorno')?.addEventListener('change', () => {
+        atualizarPreviewVetor();
+    });
+
     {
         const _confirmarCorOrig = window.confirmarCor;
         window.confirmarCor = () => {
