@@ -805,10 +805,11 @@ window.addEventListener('load', () => {
         return cantos;
     }
 
-    // Perímetro do polígono
-    function _calcPerimetro(pts) {
+    // Perímetro do polígono (inclui segmento de fechamento se fechado=true)
+    function _calcPerimetro(pts, fechado) {
         let p = 0;
         for (let i = 1; i < pts.length; i++) p += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+        if (fechado && pts.length > 1) p += Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y);
         return p;
     }
 
@@ -846,7 +847,7 @@ window.addEventListener('load', () => {
         if (pts.length === 2) return `M${f(pts[0].x)} ${f(pts[0].y)} L${f(pts[1].x)} ${f(pts[1].y)}`;
 
         // 1. RDP adaptativo (epsilon = 0.15% do perímetro, mín 0.4px)
-        const perim = _calcPerimetro(pts);
+        const perim = _calcPerimetro(pts, fechado);
         const eps = Math.max(0.4, perim * 0.0015);
         const simp = _rdpSimplificar(pts, eps);
 
@@ -4944,107 +4945,108 @@ window.addEventListener('load', () => {
 
     function gerarGrupoContornoEscuro(img, corTraco, larguraTraco = 1.2, sensibilidade = obterSensibilidadeVetorizacao(), analise = null) {
         if (!img || !window._cvReady || !window.cv) return null;
-
         const cv = window.cv;
-        const c = document.createElement('canvas');
-        c.width = img.width;
-        c.height = img.height;
-        const ctx = c.getContext('2d');
-        ctx.drawImage(img, 0, 0, c.width, c.height);
+        const mats = [];
+        const _m = (mat) => { mats.push(mat); return mat; };
+        try {
+            const c = document.createElement('canvas');
+            c.width = img.width;
+            c.height = img.height;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0, c.width, c.height);
 
-        const src = cv.imread(c);
-        const gray = new cv.Mat();
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            const src = _m(cv.imread(c));
+            const gray = _m(new cv.Mat());
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-        // 1) Bilateral filter forte para denoising
-        const denoised = new cv.Mat();
-        cv.bilateralFilter(gray, denoised, 9, 70, 70);
+            // 1) Bilateral filter forte para denoising
+            const denoised = _m(new cv.Mat());
+            cv.bilateralFilter(gray, denoised, 9, 70, 70);
 
-        // 2) Canny adaptativo (mesma lógica do vetorizarContornos)
-        const med = _medianaMat(denoised);
-        const precisao = clampNum((sensibilidade - 10) / 140, 0, 1);
-        const autoLow = Math.max(15, Math.round(0.67 * med * (1.1 - precisao * 0.35)));
-        const autoHigh = Math.min(255, Math.round(1.33 * med * (1.05 - precisao * 0.25)));
+            // 2) Canny adaptativo (mesma fórmula do vetorizarContornos)
+            const med = _medianaMat(denoised);
+            const precisao = clampNum((sensibilidade - 10) / 140, 0, 1);
+            const autoLow = Math.max(15, Math.round(0.67 * med * (1.1 - precisao * 0.35)));
+            const autoHigh = Math.min(255, Math.round(1.33 * med * (1.05 - precisao * 0.25)));
 
-        // 3) Multi-escala: fino + grosso
-        const blur1 = new cv.Mat();
-        cv.GaussianBlur(denoised, blur1, new cv.Size(3, 3), 0.8);
-        const edges1 = new cv.Mat();
-        cv.Canny(blur1, edges1, autoLow, autoHigh);
+            // 3) Multi-escala: fino + grosso
+            const blur1 = _m(new cv.Mat());
+            cv.GaussianBlur(denoised, blur1, new cv.Size(3, 3), 0.8);
+            const edges1 = _m(new cv.Mat());
+            cv.Canny(blur1, edges1, autoLow, autoHigh);
 
-        const blur2 = new cv.Mat();
-        cv.GaussianBlur(denoised, blur2, new cv.Size(5, 5), 1.5);
-        const edges2 = new cv.Mat();
-        cv.Canny(blur2, edges2, Math.round(autoLow * 0.85), Math.round(autoHigh * 0.85));
+            const blur2 = _m(new cv.Mat());
+            cv.GaussianBlur(denoised, blur2, new cv.Size(5, 5), 1.5);
+            const edges2 = _m(new cv.Mat());
+            cv.Canny(blur2, edges2, Math.round(autoLow * 0.85), Math.round(autoHigh * 0.85));
 
-        const edges = new cv.Mat();
-        cv.bitwise_or(edges1, edges2, edges);
+            const edges = _m(new cv.Mat());
+            cv.bitwise_or(edges1, edges2, edges);
 
-        // 4) Máscara de pixels escuros (adaptive threshold por tipo de imagem)
-        const darkMask = new cv.Mat();
-        const darkThreshold = analise?.tipo === 'lineart' ? 226 : analise?.tipo === 'desenho' ? 110 : 100;
-        cv.threshold(gray, darkMask, darkThreshold, 255, cv.THRESH_BINARY_INV);
+            // 4) Máscara de pixels escuros (threshold por tipo de imagem)
+            const darkMask = _m(new cv.Mat());
+            const darkThreshold = analise?.tipo === 'lineart' ? 226 : analise?.tipo === 'desenho' ? 110 : 100;
+            cv.threshold(gray, darkMask, darkThreshold, 255, cv.THRESH_BINARY_INV);
 
-        const masked = new cv.Mat();
-        cv.bitwise_and(edges, darkMask, masked);
+            const masked = _m(new cv.Mat());
+            cv.bitwise_and(edges, darkMask, masked);
 
-        // 5) Morfologia: close + thin dilate
-        const kClose = cv.Mat.ones(3, 3, cv.CV_8U);
-        cv.morphologyEx(masked, masked, cv.MORPH_CLOSE, kClose);
-        const kThin = cv.Mat.ones(2, 2, cv.CV_8U);
-        cv.dilate(masked, masked, kThin);
+            // 5) Morfologia: close + thin dilate
+            const kClose = _m(cv.Mat.ones(3, 3, cv.CV_8U));
+            cv.morphologyEx(masked, masked, cv.MORPH_CLOSE, kClose);
+            const kThin = _m(cv.Mat.ones(2, 2, cv.CV_8U));
+            cv.dilate(masked, masked, kThin);
 
-        // 6) Extrair contornos com filtragem
-        const contours = new cv.MatVector();
-        const hierarchy = new cv.Mat();
-        cv.findContours(masked, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+            // 6) Extrair contornos com filtragem
+            const contours = _m(new cv.MatVector());
+            const hierarchy = _m(new cv.Mat());
+            cv.findContours(masked, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-        const ns = 'http://www.w3.org/2000/svg';
-        const g = document.createElementNS(ns, 'g');
-        g.setAttribute('data-tm-auto-outline', '1');
+            const ns = 'http://www.w3.org/2000/svg';
+            const g = document.createElementNS(ns, 'g');
+            g.setAttribute('data-tm-auto-outline', '1');
 
-        const ipx = img.width * img.height;
-        const minArea = Math.max(50, ipx * 0.0003);
-        const minPerim = Math.max(15, Math.sqrt(ipx) * 0.02);
-        const epsApprox = clampNum(2.0 - precisao * 0.8, 1.0, 2.0);
+            const ipx = img.width * img.height;
+            const minArea = Math.max(50, ipx * 0.0003);
+            const minPerim = Math.max(15, Math.sqrt(ipx) * 0.02);
+            const epsApprox = clampNum(2.0 - precisao * 0.8, 1.0, 2.0);
 
-        for (let i = 0; i < contours.size(); i++) {
-            const contour = contours.get(i);
-            const area = Math.abs(cv.contourArea(contour));
-            const perim = cv.arcLength(contour, true);
-            if (area < minArea || perim < minPerim || contour.data32S.length < 16) {
-                contour.delete(); continue;
+            for (let i = 0; i < contours.size(); i++) {
+                const contour = contours.get(i);
+                const area = Math.abs(cv.contourArea(contour));
+                const perim = cv.arcLength(contour, true);
+                if (area < minArea || perim < minPerim || contour.data32S.length < 16) {
+                    contour.delete(); continue;
+                }
+                const approx = new cv.Mat();
+                cv.approxPolyDP(contour, approx, epsApprox, true);
+                const srcPts = approx.data32S.length >= 6 ? approx.data32S : contour.data32S;
+                const points = [];
+                for (let j = 0; j < srcPts.length; j += 2) {
+                    points.push({ x: srcPts[j], y: srcPts[j + 1] });
+                }
+                if (points.length >= 4) {
+                    const p = document.createElementNS(ns, 'path');
+                    p.setAttribute('d', pontosParaPathSuave(points, true) + ' Z');
+                    p.setAttribute('fill', 'none');
+                    p.setAttribute('stroke', corTraco);
+                    p.setAttribute('stroke-width', larguraTraco);
+                    p.setAttribute('stroke-linecap', 'round');
+                    p.setAttribute('stroke-linejoin', 'round');
+                    p.setAttribute('paint-order', 'stroke');
+                    g.appendChild(p);
+                }
+                approx.delete();
+                contour.delete();
             }
-            const approx = new cv.Mat();
-            cv.approxPolyDP(contour, approx, epsApprox, true);
-            const srcPts = approx.data32S.length >= 6 ? approx.data32S : contour.data32S;
-            const points = [];
-            for (let j = 0; j < srcPts.length; j += 2) {
-                points.push({ x: srcPts[j], y: srcPts[j + 1] });
-            }
-            if (points.length >= 4) {
-                const p = document.createElementNS(ns, 'path');
-                p.setAttribute('d', pontosParaPathSuave(points, true) + ' Z');
-                p.setAttribute('fill', 'none');
-                p.setAttribute('stroke', corTraco);
-                p.setAttribute('stroke-width', larguraTraco);
-                p.setAttribute('stroke-linecap', 'round');
-                p.setAttribute('stroke-linejoin', 'round');
-                p.setAttribute('paint-order', 'stroke');
-                g.appendChild(p);
-            }
-            approx.delete();
-            contour.delete();
+
+            for (const m of mats) { try { m.delete(); } catch (_) {} }
+            return g.childNodes.length ? g : null;
+        } catch (e) {
+            for (const m of mats) { try { m.delete(); } catch (_) {} }
+            console.error('gerarGrupoContornoEscuro erro:', e);
+            return null;
         }
-
-        src.delete(); gray.delete(); denoised.delete();
-        blur1.delete(); blur2.delete();
-        edges1.delete(); edges2.delete(); edges.delete();
-        darkMask.delete(); masked.delete();
-        kClose.delete(); kThin.delete();
-        contours.delete(); hierarchy.delete();
-
-        return g.childNodes.length ? g : null;
     }
 
     function suavizarRotulosPaleta(labels, width, height, numCores, passes = 1) {
@@ -5371,45 +5373,47 @@ window.addEventListener('load', () => {
     // ── Vetorização profissional: multi-escala + Canny adaptativo ─────
     function vetorizarContornos(img, corTraco, larguraTraco = 2, sensibilidade = obterSensibilidadeVetorizacao()) {
         return new Promise((resolve, reject) => {
+            const mats = []; // rastreia TODOS os Mat para cleanup seguro
+            const _m = (mat) => { mats.push(mat); return mat; }; // helper: registra e retorna
             try {
                 const cfgSens = obterConfigSensibilidade(sensibilidade, 10, false);
-                const src = cv.imread(img);
-                const gray = new cv.Mat();
+                const src = _m(cv.imread(img));
+                const gray = _m(new cv.Mat());
                 cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
                 // 1) Denoising forte: bilateral preserva bordas, remove textura
-                const denoised = new cv.Mat();
+                const denoised = _m(new cv.Mat());
                 cv.bilateralFilter(gray, denoised, 9, 75, 75);
 
                 // 2) Canny adaptativo: thresholds baseados na mediana da imagem
                 const med = _medianaMat(denoised);
-                const sensF = cfgSens.precisao; // 0 (pouco detalhe) → 1 (muito detalhe)
-                const autoLow = Math.max(15, Math.round(0.67 * med * (1.15 - sensF * 0.45)));
-                const autoHigh = Math.min(255, Math.round(1.33 * med * (1.10 - sensF * 0.30)));
+                const sensF = cfgSens.precisao;
+                const autoLow = Math.max(15, Math.round(0.67 * med * (1.1 - sensF * 0.35)));
+                const autoHigh = Math.min(255, Math.round(1.33 * med * (1.05 - sensF * 0.25)));
 
                 // 3) Multi-escala: fino (detalhes) + grosso (estrutura)
-                const blur1 = new cv.Mat();
+                const blur1 = _m(new cv.Mat());
                 cv.GaussianBlur(denoised, blur1, new cv.Size(3, 3), 0.8);
-                const edges1 = new cv.Mat();
+                const edges1 = _m(new cv.Mat());
                 cv.Canny(blur1, edges1, autoLow, autoHigh);
 
-                const blur2 = new cv.Mat();
+                const blur2 = _m(new cv.Mat());
                 cv.GaussianBlur(denoised, blur2, new cv.Size(7, 7), 2.0);
-                const edges2 = new cv.Mat();
+                const edges2 = _m(new cv.Mat());
                 cv.Canny(blur2, edges2, Math.round(autoLow * 0.8), Math.round(autoHigh * 0.8));
 
-                const edges = new cv.Mat();
+                const edges = _m(new cv.Mat());
                 cv.bitwise_or(edges1, edges2, edges);
 
                 // 4) Morfologia: close para conectar → thin dilate para micro-junções
-                const kClose = cv.Mat.ones(3, 3, cv.CV_8U);
+                const kClose = _m(cv.Mat.ones(3, 3, cv.CV_8U));
                 cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kClose);
-                const kThin = cv.Mat.ones(2, 2, cv.CV_8U);
+                const kThin = _m(cv.Mat.ones(2, 2, cv.CV_8U));
                 cv.dilate(edges, edges, kThin);
 
                 // 5) Extrair contornos com hierarquia (CCOMP detecta buracos)
-                const contours = new cv.MatVector();
-                const hierarchy = new cv.Mat();
+                const contours = _m(new cv.MatVector());
+                const hierarchy = _m(new cv.Mat());
                 cv.findContours(edges, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
 
                 const ns = 'http://www.w3.org/2000/svg';
@@ -5429,7 +5433,6 @@ window.addEventListener('load', () => {
                     const area = Math.abs(cv.contourArea(contour));
                     const perim = cv.arcLength(contour, true);
 
-                    // Filtrar por área, perímetro, e contornos degenrados
                     if (area < minArea || perim < minPerim) { contour.delete(); continue; }
                     const rect = cv.boundingRect(contour);
                     const menorLado = Math.min(rect.width, rect.height);
@@ -5457,14 +5460,10 @@ window.addEventListener('load', () => {
                     contour.delete();
                 }
 
-                src.delete(); gray.delete(); denoised.delete();
-                blur1.delete(); blur2.delete();
-                edges1.delete(); edges2.delete(); edges.delete();
-                kClose.delete(); kThin.delete();
-                contours.delete(); hierarchy.delete();
-
+                for (const m of mats) { try { m.delete(); } catch (_) {} }
                 resolve(svgEl);
             } catch (e) {
+                for (const m of mats) { try { m.delete(); } catch (_) {} }
                 reject(e);
             }
         });
