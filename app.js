@@ -5079,7 +5079,9 @@ window.addEventListener('load', () => {
                         }
                     }
 
-                    if (melhorLabel !== atual && melhorCount >= 5 && (counts[atual] || 0) <= 2) {
+                    // Threshold mais baixo: troca se >= 4 vizinhos concordam e <= 3 do atual
+                    // (antes: >=5 e <=2 — muito restritivo, causava ruído nas bordas)
+                    if (melhorLabel !== atual && melhorCount >= 4 && (counts[atual] || 0) <= 3) {
                         dst[idx] = melhorLabel;
                     }
                 }
@@ -5118,11 +5120,13 @@ window.addEventListener('load', () => {
 
                     const atual = src[idx];
                     if (atual < 0) {
-                        if (melhorLabel >= 0 && melhorCount >= 6) dst[idx] = melhorLabel;
+                        // Preenche gaps transparentes se >= 4 vizinhos concordam (antes: 6)
+                        if (melhorLabel >= 0 && melhorCount >= 4) dst[idx] = melhorLabel;
                         continue;
                     }
 
-                    if (melhorLabel >= 0 && melhorLabel !== atual && melhorCount >= 7 && (counts[atual] || 0) <= 1) {
+                    // Corrige outliers se >= 6 vizinhos concordam e <= 2 do atual (antes: 7/1)
+                    if (melhorLabel >= 0 && melhorLabel !== atual && melhorCount >= 6 && (counts[atual] || 0) <= 2) {
                         dst[idx] = melhorLabel;
                     }
                 }
@@ -5224,7 +5228,8 @@ window.addEventListener('load', () => {
             labels[px] = melhor;
         }
 
-        const areaMinimaComponente = clampNum(Math.round((width * height) * 0.00002), 14, 72);
+        // Área mínima maior para fundir componentes pequenos (antes: 0.002%, agora: 0.005%)
+        const areaMinimaComponente = clampNum(Math.round((width * height) * 0.00005), 24, 150);
         const labelsSuaves = preencherMicroFalhasPaleta(
             suavizarRotulosPaleta(labels, width, height, paletaRgb.length, passesSuavizacao),
             width,
@@ -5270,104 +5275,130 @@ window.addEventListener('load', () => {
 
     function vetorizarMulticorPorCamadas(imgData, paleta, larguraTraco, cfgSens, sensibilidade, analiseAtual, corContornoBase, aplicarContorno) {
         const cv = window.cv;
-        const width = imgData.width;
-        const height = imgData.height;
-        const { labels } = quantizarImageDataParaPaleta(imgData, paleta, window._corFundo, 3);
-        const ns = 'http://www.w3.org/2000/svg';
-        const svgEl = document.createElementNS(ns, 'svg');
-        svgEl.setAttribute('width', width);
-        svgEl.setAttribute('height', height);
-        svgEl.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
-        svgEl.setAttribute('shape-rendering', 'geometricPrecision');
-        svgEl.setAttribute('fill-rule', 'evenodd');
+        const mats = [];
+        const _m = (mat) => { mats.push(mat); return mat; };
+        try {
+            const width = imgData.width;
+            const height = imgData.height;
+            const { labels } = quantizarImageDataParaPaleta(imgData, paleta, window._corFundo, 4);
+            const ns = 'http://www.w3.org/2000/svg';
+            const svgEl = document.createElementNS(ns, 'svg');
+            svgEl.setAttribute('width', width);
+            svgEl.setAttribute('height', height);
+            svgEl.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+            svgEl.setAttribute('shape-rendering', 'geometricPrecision');
+            svgEl.setAttribute('fill-rule', 'evenodd');
 
-        const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
-        const epsilon = clampNum(cfgSens.smoothEpsilon * 0.9, 0.34, 1.15);
-        const areaBase = clampNum(Math.round((width * height) * 0.00003), 20, 140);
-        const minArea = paleta.length >= 6 ? Math.round(areaBase * 1.3) : areaBase;
-        const minHoleArea = Math.max(30, Math.round(minArea * 1.85));
+            // Kernels: 3x3 para morfologia principal, 3x3 para dilate de overlap
+            const kMorph = _m(cv.Mat.ones(3, 3, cv.CV_8U));
+            const kOverlap = _m(cv.Mat.ones(3, 3, cv.CV_8U));
 
-        const lerHierarquia = (hierData, idx, offset) => (hierData && idx >= 0 ? hierData[idx * 4 + offset] : -1);
-        const extrairPathIndice = (contours, idx, areaMinima) => {
-            const contour = contours.get(idx);
-            try {
-                const area = Math.abs(cv.contourArea(contour));
-                if (area < areaMinima) return '';
-                const rect = cv.boundingRect(contour);
-                const menorLado = Math.min(rect.width, rect.height);
-                const maiorLado = Math.max(rect.width, rect.height);
-                if (menorLado <= 2 && area < areaMinima * 8) return '';
-                if (menorLado <= 3 && maiorLado < 18) return '';
-                const approx = new cv.Mat();
+            // Epsilon mais alto = contornos mais suaves e menos polígonos
+            const epsilon = clampNum(cfgSens.smoothEpsilon * 0.7, 1.0, 2.8);
+
+            const ipx = width * height;
+            const areaBase = clampNum(Math.round(ipx * 0.00005), 30, 200);
+            const minArea = paleta.length >= 6 ? Math.round(areaBase * 1.4) : areaBase;
+            const minHoleArea = Math.max(50, Math.round(minArea * 2.0));
+
+            const lerHierarquia = (hierData, idx, offset) => (hierData && idx >= 0 ? hierData[idx * 4 + offset] : -1);
+            const extrairPathIndice = (contours, idx, areaMinima) => {
+                const contour = contours.get(idx);
                 try {
-                    cv.approxPolyDP(contour, approx, epsilon, true);
-                    const srcPts = approx.data32S.length ? approx.data32S : contour.data32S;
-                    const points = [];
-                    for (let j = 0; j < srcPts.length; j += 2) {
-                        points.push({ x: srcPts[j], y: srcPts[j + 1] });
+                    const area = Math.abs(cv.contourArea(contour));
+                    if (area < areaMinima) return '';
+                    const rect = cv.boundingRect(contour);
+                    const menorLado = Math.min(rect.width, rect.height);
+                    const maiorLado = Math.max(rect.width, rect.height);
+                    if (menorLado <= 2 && area < areaMinima * 8) return '';
+                    if (menorLado <= 3 && maiorLado < 18) return '';
+                    const approx = new cv.Mat();
+                    try {
+                        cv.approxPolyDP(contour, approx, epsilon, true);
+                        const srcPts = approx.data32S.length >= 6 ? approx.data32S : contour.data32S;
+                        const points = [];
+                        for (let j = 0; j < srcPts.length; j += 2) {
+                            points.push({ x: srcPts[j], y: srcPts[j + 1] });
+                        }
+                        return pontosParaPathLinearFechado(points);
+                    } finally {
+                        approx.delete();
                     }
-                    return pontosParaPathLinearFechado(points);
                 } finally {
-                    approx.delete();
+                    contour.delete();
                 }
-            } finally {
-                contour.delete();
-            }
-        };
+            };
 
-        for (let corIdx = 0; corIdx < paleta.length; corIdx++) {
-            const mask = new cv.Mat(height, width, cv.CV_8UC1);
-            mask.data.fill(0);
-            for (let i = 0; i < labels.length; i++) {
-                if (labels[i] === corIdx) mask.data[i] = 255;
-            }
-
-            cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kernel);
-            cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
-            cv.medianBlur(mask, mask, 3);
-
-            const contours = new cv.MatVector();
-            const hierarchy = new cv.Mat();
-            cv.findContours(mask, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
-            const hierData = hierarchy.data32S;
-
-            for (let i = 0; i < contours.size(); i++) {
-                if (lerHierarquia(hierData, i, 3) !== -1) continue;
-                let d = extrairPathIndice(contours, i, minArea);
-                if (!d) continue;
-
-                for (let child = lerHierarquia(hierData, i, 2); child !== -1; child = lerHierarquia(hierData, child, 0)) {
-                    const holePath = extrairPathIndice(contours, child, minHoleArea);
-                    if (holePath) d += ' ' + holePath;
+            for (let corIdx = 0; corIdx < paleta.length; corIdx++) {
+                const mask = new cv.Mat(height, width, cv.CV_8UC1);
+                mask.data.fill(0);
+                for (let i = 0; i < labels.length; i++) {
+                    if (labels[i] === corIdx) mask.data[i] = 255;
                 }
 
-                const path = document.createElementNS(ns, 'path');
-                path.setAttribute('d', d);
-                path.setAttribute('fill', paleta[corIdx]);
-                path.setAttribute('stroke', 'none');
-                path.setAttribute('fill-rule', 'evenodd');
-                svgEl.appendChild(path);
+                // 1) Morfologia 3x3: open (ruído) → close (buracos)
+                cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kMorph);
+                cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kMorph);
+
+                // 2) MedianBlur 5 para suavizar bordas escada
+                cv.medianBlur(mask, mask, 5);
+
+                // 3) GaussianBlur leve para suavizar ainda mais os contornos
+                cv.GaussianBlur(mask, mask, new cv.Size(3, 3), 0.8);
+                cv.threshold(mask, mask, 127, 255, cv.THRESH_BINARY);
+
+                // 4) Dilate 1px de overlap — elimina gaps brancos entre regiões
+                cv.dilate(mask, mask, kOverlap, new cv.Point(-1, -1), 1);
+
+                const contours = new cv.MatVector();
+                const hierarchy = new cv.Mat();
+                cv.findContours(mask, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
+                const hierData = hierarchy.data32S;
+
+                for (let i = 0; i < contours.size(); i++) {
+                    if (lerHierarquia(hierData, i, 3) !== -1) continue;
+                    let d = extrairPathIndice(contours, i, minArea);
+                    if (!d) continue;
+
+                    for (let child = lerHierarquia(hierData, i, 2); child !== -1; child = lerHierarquia(hierData, child, 0)) {
+                        const holePath = extrairPathIndice(contours, child, minHoleArea);
+                        if (holePath) d += ' ' + holePath;
+                    }
+
+                    const path = document.createElementNS(ns, 'path');
+                    path.setAttribute('d', d);
+                    path.setAttribute('fill', paleta[corIdx]);
+                    // Stroke fino da mesma cor: elimina micro-gaps restantes
+                    path.setAttribute('stroke', paleta[corIdx]);
+                    path.setAttribute('stroke-width', '0.8');
+                    path.setAttribute('stroke-linejoin', 'round');
+                    path.setAttribute('fill-rule', 'evenodd');
+                    svgEl.appendChild(path);
+                }
+
+                mask.delete();
+                contours.delete();
+                hierarchy.delete();
             }
 
-            mask.delete();
-            contours.delete();
-            hierarchy.delete();
+            if (aplicarContorno) {
+                const outlineGroup = gerarGrupoContornoEscuro(
+                    window.imgParaVetor,
+                    corContornoBase || '#1a1a1a',
+                    Math.max(0.5, larguraTraco * 0.28),
+                    sensibilidade,
+                    analiseAtual
+                );
+                if (outlineGroup) svgEl.appendChild(outlineGroup);
+            }
+
+            for (const m of mats) { try { m.delete(); } catch (_) {} }
+            return svgEl;
+        } catch (e) {
+            for (const m of mats) { try { m.delete(); } catch (_) {} }
+            console.error('vetorizarMulticorPorCamadas erro:', e);
+            throw e;
         }
-
-        kernel.delete();
-
-        if (aplicarContorno) {
-            const outlineGroup = gerarGrupoContornoEscuro(
-                window.imgParaVetor,
-                corContornoBase || '#1a1a1a',
-                Math.max(0.75, larguraTraco * 0.36),
-                sensibilidade,
-                analiseAtual
-            );
-            if (outlineGroup) svgEl.appendChild(outlineGroup);
-        }
-
-        return svgEl;
     }
 
     // ── Vetorização profissional: multi-escala + Canny adaptativo ─────
