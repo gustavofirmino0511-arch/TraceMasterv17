@@ -889,6 +889,53 @@ window.addEventListener('load', () => {
         return pontosParaPathSuave(pts, true) + ' Z';
     }
 
+    // ── Path ULTRA-SUAVE para vetorização (epsilon baixo, mais curvas Bézier) ──
+    function pontosParaPathVetor(pts) {
+        if (!pts || pts.length < 3) return '';
+        const f = (v) => v.toFixed(1);
+        if (pts.length < 4) {
+            return `M${f(pts[0].x)} ${f(pts[0].y)} L${f(pts[1].x)} ${f(pts[1].y)} L${f(pts[pts.length - 1].x)} ${f(pts[pts.length - 1].y)} Z`;
+        }
+
+        // 1. RDP com epsilon MUITO baixo (0.05% do perímetro, mín 0.25px)
+        //    Preserva muito mais pontos = curvas mais suaves
+        const perim = _calcPerimetro(pts, true);
+        const eps = Math.max(0.25, perim * 0.0005);
+        const simp = _rdpSimplificar(pts, eps);
+
+        if (simp.length < 3) {
+            return `M${f(simp[0].x)} ${f(simp[0].y)} L${f(simp[simp.length - 1].x)} ${f(simp[simp.length - 1].y)} Z`;
+        }
+
+        // 2. Detectar SOMENTE cantos muito acentuados (cos < 0.05 ≈ > 87°)
+        //    Tudo que não for quase 90° vira curva suave
+        const cantos = _detectarCantos(simp, 0.05);
+        const n = simp.length;
+
+        // 3. Construir path: quase tudo Bézier, quase nenhum L
+        let d = `M${f(simp[0].x)} ${f(simp[0].y)}`;
+
+        for (let i = 0; i < n - 1; i++) {
+            const curr = simp[i], next = simp[i + 1];
+            if (cantos.has(i) || cantos.has(i + 1)) {
+                d += ` L${f(next.x)} ${f(next.y)}`;
+            } else {
+                const prev = simp[(i - 1 + n) % n];
+                const after = simp[(i + 2) % n];
+                const cp = _crToBezier(prev, curr, next, after);
+                d += ` C${f(cp.cp1x)} ${f(cp.cp1y)} ${f(cp.cp2x)} ${f(cp.cp2y)} ${f(next.x)} ${f(next.y)}`;
+            }
+        }
+
+        // 4. Fechamento suave
+        if (n > 2 && !cantos.has(n - 1) && !cantos.has(0)) {
+            const cp = _crToBezier(simp[n - 2], simp[n - 1], simp[0], simp[1]);
+            d += ` C${f(cp.cp1x)} ${f(cp.cp1y)} ${f(cp.cp2x)} ${f(cp.cp2y)} ${f(simp[0].x)} ${f(simp[0].y)}`;
+        }
+
+        return d + ' Z';
+    }
+
     // Garante filtro blur no livreLayer defs
     function garantirFiltroBlur(id, desvio) {
         let defs = livreLayer.querySelector('defs');
@@ -5000,7 +5047,7 @@ window.addEventListener('load', () => {
             // 6) Extrair contornos com filtragem
             const contours = _m(new cv.MatVector());
             const hierarchy = _m(new cv.Mat());
-            cv.findContours(masked, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+            cv.findContours(masked, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_NONE);
 
             const ns = 'http://www.w3.org/2000/svg';
             const g = document.createElementNS(ns, 'g');
@@ -5009,7 +5056,6 @@ window.addEventListener('load', () => {
             const ipx = img.width * img.height;
             const minArea = Math.max(50, ipx * 0.0003);
             const minPerim = Math.max(15, Math.sqrt(ipx) * 0.02);
-            const epsApprox = clampNum(1.4 - precisao * 0.6, 0.6, 1.4);
 
             for (let i = 0; i < contours.size(); i++) {
                 const contour = contours.get(i);
@@ -5018,16 +5064,19 @@ window.addEventListener('load', () => {
                 if (area < minArea || perim < minPerim || contour.data32S.length < 16) {
                     contour.delete(); continue;
                 }
-                const approx = new cv.Mat();
-                cv.approxPolyDP(contour, approx, epsApprox, true);
-                const srcPts = approx.data32S.length >= 6 ? approx.data32S : contour.data32S;
+                // SEM approxPolyDP — subsampling + Catmull-Rom ultra-suave
+                const raw = contour.data32S;
+                const totalPts = raw.length / 2;
+                const maxP = 500;
+                const step = Math.max(1, Math.floor(totalPts / maxP));
                 const points = [];
-                for (let j = 0; j < srcPts.length; j += 2) {
-                    points.push({ x: srcPts[j], y: srcPts[j + 1] });
+                for (let j = 0; j < raw.length; j += 2 * step) {
+                    points.push({ x: raw[j], y: raw[j + 1] });
                 }
+                contour.delete();
                 if (points.length >= 4) {
                     const p = document.createElementNS(ns, 'path');
-                    p.setAttribute('d', pontosParaPathSuave(points, true) + ' Z');
+                    p.setAttribute('d', pontosParaPathVetor(points));
                     p.setAttribute('fill', 'none');
                     p.setAttribute('stroke', corTraco);
                     p.setAttribute('stroke-width', larguraTraco);
@@ -5036,8 +5085,6 @@ window.addEventListener('load', () => {
                     p.setAttribute('paint-order', 'stroke');
                     g.appendChild(p);
                 }
-                approx.delete();
-                contour.delete();
             }
 
             for (const m of mats) { try { m.delete(); } catch (_) {} }
@@ -5289,13 +5336,9 @@ window.addEventListener('load', () => {
             svgEl.setAttribute('shape-rendering', 'geometricPrecision');
             svgEl.setAttribute('fill-rule', 'evenodd');
 
-            // Kernels: 2x2 para morfologia leve, 3x3 para close, 3x3 para dilate de overlap
-            const kSmall = _m(cv.Mat.ones(2, 2, cv.CV_8U));
-            const kMorph = _m(cv.Mat.ones(3, 3, cv.CV_8U));
+            // Kernels morfológicos
+            const kClose = _m(cv.Mat.ones(5, 5, cv.CV_8U));
             const kOverlap = _m(cv.Mat.ones(3, 3, cv.CV_8U));
-
-            // Epsilon BAIXO para preservar detalhes — a suavização final é feita pelo Catmull-Rom
-            const epsilon = clampNum(cfgSens.smoothEpsilon * 0.30, 0.4, 1.2);
 
             const ipx = width * height;
             const areaBase = clampNum(Math.round(ipx * 0.00005), 30, 200);
@@ -5303,6 +5346,8 @@ window.addEventListener('load', () => {
             const minHoleArea = Math.max(50, Math.round(minArea * 2.0));
 
             const lerHierarquia = (hierData, idx, offset) => (hierData && idx >= 0 ? hierData[idx * 4 + offset] : -1);
+
+            // Extrai path de um contorno — SEM approxPolyDP, usa subsampling + Catmull-Rom
             const extrairPathIndice = (contours, idx, areaMinima) => {
                 const contour = contours.get(idx);
                 try {
@@ -5313,18 +5358,23 @@ window.addEventListener('load', () => {
                     const maiorLado = Math.max(rect.width, rect.height);
                     if (menorLado <= 2 && area < areaMinima * 8) return '';
                     if (menorLado <= 3 && maiorLado < 18) return '';
-                    const approx = new cv.Mat();
-                    try {
-                        cv.approxPolyDP(contour, approx, epsilon, true);
-                        const srcPts = approx.data32S.length >= 6 ? approx.data32S : contour.data32S;
-                        const points = [];
-                        for (let j = 0; j < srcPts.length; j += 2) {
-                            points.push({ x: srcPts[j], y: srcPts[j + 1] });
-                        }
-                        return pontosParaPathLinearFechado(points);
-                    } finally {
-                        approx.delete();
+
+                    // Pega TODOS os pontos do contorno (CHAIN_APPROX_NONE)
+                    const raw = contour.data32S;
+                    const totalPts = raw.length / 2;
+                    if (totalPts < 4) return '';
+
+                    // Subsampling inteligente: mantém ~500 pontos para curvas suaves
+                    const maxPontos = 500;
+                    const step = Math.max(1, Math.floor(totalPts / maxPontos));
+                    const points = [];
+                    for (let j = 0; j < raw.length; j += 2 * step) {
+                        points.push({ x: raw[j], y: raw[j + 1] });
                     }
+                    if (points.length < 3) return '';
+
+                    // Usa pontosParaPathVetor (RDP ultra-fino + Catmull-Rom max)
+                    return pontosParaPathVetor(points);
                 } finally {
                     contour.delete();
                 }
@@ -5337,24 +5387,22 @@ window.addEventListener('load', () => {
                     if (labels[i] === corIdx) mask.data[i] = 255;
                 }
 
-                // 1) Morfologia: open MÍNIMO (2x2) para remover só ruído fino, sem erodir bordas
-                cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kSmall);
-                // Close 3x3 para preencher buracos internos
-                cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kMorph);
+                // 1) SEM MORPH_OPEN — não erodir bordas. Só CLOSE 5x5 para fechar buracos
+                cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kClose);
 
-                // 2) MedianBlur 7 para suavizar bordas escada (mais agressivo que 5)
-                cv.medianBlur(mask, mask, 7);
+                // 2) Suavização forte em 2 passes: Gaussian grande → threshold → Gaussian → threshold
+                cv.GaussianBlur(mask, mask, new cv.Size(9, 9), 2.5);
+                cv.threshold(mask, mask, 100, 255, cv.THRESH_BINARY);
+                cv.GaussianBlur(mask, mask, new cv.Size(5, 5), 1.5);
+                cv.threshold(mask, mask, 110, 255, cv.THRESH_BINARY);
 
-                // 3) GaussianBlur mais forte para contornos realmente suaves
-                cv.GaussianBlur(mask, mask, new cv.Size(5, 5), 1.2);
-                cv.threshold(mask, mask, 120, 255, cv.THRESH_BINARY);
-
-                // 4) Dilate 2 iterações de overlap — elimina gaps brancos entre regiões
+                // 3) Dilate 2 iterações: overlap generoso elimina gaps brancos
                 cv.dilate(mask, mask, kOverlap, new cv.Point(-1, -1), 2);
 
+                // 4) Extrair contornos com TODOS os pontos (CHAIN_APPROX_NONE)
                 const contours = new cv.MatVector();
                 const hierarchy = new cv.Mat();
-                cv.findContours(mask, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
+                cv.findContours(mask, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_NONE);
                 const hierData = hierarchy.data32S;
 
                 for (let i = 0; i < contours.size(); i++) {
@@ -5370,7 +5418,6 @@ window.addEventListener('load', () => {
                     const path = document.createElementNS(ns, 'path');
                     path.setAttribute('d', d);
                     path.setAttribute('fill', paleta[corIdx]);
-                    // Stroke mais grosso da mesma cor: elimina micro-gaps restantes
                     path.setAttribute('stroke', paleta[corIdx]);
                     path.setAttribute('stroke-width', '1.5');
                     path.setAttribute('stroke-linejoin', 'round');
@@ -5445,10 +5492,10 @@ window.addEventListener('load', () => {
                 const kThin = _m(cv.Mat.ones(2, 2, cv.CV_8U));
                 cv.dilate(edges, edges, kThin);
 
-                // 5) Extrair contornos com hierarquia (CCOMP detecta buracos)
+                // 5) Extrair contornos com TODOS os pontos (CHAIN_APPROX_NONE)
                 const contours = _m(new cv.MatVector());
                 const hierarchy = _m(new cv.Mat());
-                cv.findContours(edges, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
+                cv.findContours(edges, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_NONE);
 
                 const ns = 'http://www.w3.org/2000/svg';
                 const svgEl = document.createElementNS(ns, 'svg');
@@ -5472,18 +5519,20 @@ window.addEventListener('load', () => {
                     const menorLado = Math.min(rect.width, rect.height);
                     if (menorLado < 3 && area < minArea * 5) { contour.delete(); continue; }
 
-                    const approx = new cv.Mat();
-                    // Epsilon reduzido: preserva detalhes, Catmull-Rom suaviza depois
-                    const epsLine = clampNum(cfgSens.smoothEpsilon * 0.4, 0.5, 1.5);
-                    cv.approxPolyDP(contour, approx, epsLine, true);
-                    const srcPts = approx.data32S.length >= 6 ? approx.data32S : contour.data32S;
+                    // SEM approxPolyDP — subsampling direto + Catmull-Rom
+                    const raw = contour.data32S;
+                    const totalPts = raw.length / 2;
+                    const maxPontos = 500;
+                    const step = Math.max(1, Math.floor(totalPts / maxPontos));
                     const points = [];
-                    for (let j = 0; j < srcPts.length; j += 2) {
-                        points.push({ x: srcPts[j], y: srcPts[j + 1] });
+                    for (let j = 0; j < raw.length; j += 2 * step) {
+                        points.push({ x: raw[j], y: raw[j + 1] });
                     }
+                    contour.delete();
+
                     if (points.length >= 3) {
                         const path = document.createElementNS(ns, 'path');
-                        path.setAttribute('d', pontosParaPathSuave(points, true) + ' Z');
+                        path.setAttribute('d', pontosParaPathVetor(points));
                         path.setAttribute('fill', 'none');
                         path.setAttribute('stroke', corTraco);
                         path.setAttribute('stroke-width', larguraTraco);
@@ -5492,8 +5541,6 @@ window.addEventListener('load', () => {
                         path.setAttribute('paint-order', 'stroke');
                         svgEl.appendChild(path);
                     }
-                    approx.delete();
-                    contour.delete();
                 }
 
                 for (const m of mats) { try { m.delete(); } catch (_) {} }
