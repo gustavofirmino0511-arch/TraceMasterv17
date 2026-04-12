@@ -4791,8 +4791,8 @@ window.addEventListener('load', () => {
             colorquantcycles: usarMultiCor ? Math.round(4 + precisao * 4) : 1,
             mincolorratio: usarMultiCor ? clampNum(0.003 + (1 - precisao) * 0.008, 0.002, 0.012) : 0,
             contourWidth: clampNum(0.42 + precisao * 0.34, 0.42, 0.86),
-            // smoothEpsilon agressivo: simplifica bem em baixa precisão, preserva em alta
-            smoothEpsilon: clampNum(3.5 - precisao * 2.5, 0.8, 3.5),
+            // smoothEpsilon moderado: os multiplicadores nos vetorizadores (0.30 e 0.40) reduzem ainda mais
+            smoothEpsilon: clampNum(2.8 - precisao * 1.8, 0.8, 2.8),
             // Canny thresholds são base (override adaptativo nos vetorizadores)
             cannyLow: Math.round(clampNum(95 - precisao * 45, 30, 100)),
             cannyHigh: Math.round(clampNum(210 - precisao * 65, 100, 220)),
@@ -5009,7 +5009,7 @@ window.addEventListener('load', () => {
             const ipx = img.width * img.height;
             const minArea = Math.max(50, ipx * 0.0003);
             const minPerim = Math.max(15, Math.sqrt(ipx) * 0.02);
-            const epsApprox = clampNum(2.0 - precisao * 0.8, 1.0, 2.0);
+            const epsApprox = clampNum(1.4 - precisao * 0.6, 0.6, 1.4);
 
             for (let i = 0; i < contours.size(); i++) {
                 const contour = contours.get(i);
@@ -5280,7 +5280,7 @@ window.addEventListener('load', () => {
         try {
             const width = imgData.width;
             const height = imgData.height;
-            const { labels } = quantizarImageDataParaPaleta(imgData, paleta, window._corFundo, 4);
+            const { labels } = quantizarImageDataParaPaleta(imgData, paleta, window._corFundo, 6);
             const ns = 'http://www.w3.org/2000/svg';
             const svgEl = document.createElementNS(ns, 'svg');
             svgEl.setAttribute('width', width);
@@ -5289,12 +5289,13 @@ window.addEventListener('load', () => {
             svgEl.setAttribute('shape-rendering', 'geometricPrecision');
             svgEl.setAttribute('fill-rule', 'evenodd');
 
-            // Kernels: 3x3 para morfologia principal, 3x3 para dilate de overlap
+            // Kernels: 2x2 para morfologia leve, 3x3 para close, 3x3 para dilate de overlap
+            const kSmall = _m(cv.Mat.ones(2, 2, cv.CV_8U));
             const kMorph = _m(cv.Mat.ones(3, 3, cv.CV_8U));
             const kOverlap = _m(cv.Mat.ones(3, 3, cv.CV_8U));
 
-            // Epsilon mais alto = contornos mais suaves e menos polígonos
-            const epsilon = clampNum(cfgSens.smoothEpsilon * 0.7, 1.0, 2.8);
+            // Epsilon BAIXO para preservar detalhes — a suavização final é feita pelo Catmull-Rom
+            const epsilon = clampNum(cfgSens.smoothEpsilon * 0.30, 0.4, 1.2);
 
             const ipx = width * height;
             const areaBase = clampNum(Math.round(ipx * 0.00005), 30, 200);
@@ -5336,19 +5337,20 @@ window.addEventListener('load', () => {
                     if (labels[i] === corIdx) mask.data[i] = 255;
                 }
 
-                // 1) Morfologia 3x3: open (ruído) → close (buracos)
-                cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kMorph);
+                // 1) Morfologia: open MÍNIMO (2x2) para remover só ruído fino, sem erodir bordas
+                cv.morphologyEx(mask, mask, cv.MORPH_OPEN, kSmall);
+                // Close 3x3 para preencher buracos internos
                 cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kMorph);
 
-                // 2) MedianBlur 5 para suavizar bordas escada
-                cv.medianBlur(mask, mask, 5);
+                // 2) MedianBlur 7 para suavizar bordas escada (mais agressivo que 5)
+                cv.medianBlur(mask, mask, 7);
 
-                // 3) GaussianBlur leve para suavizar ainda mais os contornos
-                cv.GaussianBlur(mask, mask, new cv.Size(3, 3), 0.8);
-                cv.threshold(mask, mask, 127, 255, cv.THRESH_BINARY);
+                // 3) GaussianBlur mais forte para contornos realmente suaves
+                cv.GaussianBlur(mask, mask, new cv.Size(5, 5), 1.2);
+                cv.threshold(mask, mask, 120, 255, cv.THRESH_BINARY);
 
-                // 4) Dilate 1px de overlap — elimina gaps brancos entre regiões
-                cv.dilate(mask, mask, kOverlap, new cv.Point(-1, -1), 1);
+                // 4) Dilate 2 iterações de overlap — elimina gaps brancos entre regiões
+                cv.dilate(mask, mask, kOverlap, new cv.Point(-1, -1), 2);
 
                 const contours = new cv.MatVector();
                 const hierarchy = new cv.Mat();
@@ -5368,10 +5370,11 @@ window.addEventListener('load', () => {
                     const path = document.createElementNS(ns, 'path');
                     path.setAttribute('d', d);
                     path.setAttribute('fill', paleta[corIdx]);
-                    // Stroke fino da mesma cor: elimina micro-gaps restantes
+                    // Stroke mais grosso da mesma cor: elimina micro-gaps restantes
                     path.setAttribute('stroke', paleta[corIdx]);
-                    path.setAttribute('stroke-width', '0.8');
+                    path.setAttribute('stroke-width', '1.5');
                     path.setAttribute('stroke-linejoin', 'round');
+                    path.setAttribute('stroke-linecap', 'round');
                     path.setAttribute('fill-rule', 'evenodd');
                     svgEl.appendChild(path);
                 }
@@ -5470,7 +5473,9 @@ window.addEventListener('load', () => {
                     if (menorLado < 3 && area < minArea * 5) { contour.delete(); continue; }
 
                     const approx = new cv.Mat();
-                    cv.approxPolyDP(contour, approx, cfgSens.smoothEpsilon, true);
+                    // Epsilon reduzido: preserva detalhes, Catmull-Rom suaviza depois
+                    const epsLine = clampNum(cfgSens.smoothEpsilon * 0.4, 0.5, 1.5);
+                    cv.approxPolyDP(contour, approx, epsLine, true);
                     const srcPts = approx.data32S.length >= 6 ? approx.data32S : contour.data32S;
                     const points = [];
                     for (let j = 0; j < srcPts.length; j += 2) {
